@@ -47,7 +47,9 @@ Cole o texto da task (geralmente uma mensagem corrida de Slack, com critérios d
 ```
 
 A skill entrega um **plano de teste** (não executa nada nem declara aprovado/reprovado):
-1. Extrai os critérios de aceite verificáveis do texto da task, perguntando antes de seguir se algum critério estiver ambíguo.
-2. Mapeia cada critério em casos de teste — UI (Playwright) quando o critério é algo que se vê/clica, API (requisição HTTP) quando é comportamento de backend.
-3. Cobre além do caminho feliz (erro esperado, campo vazio, input inválido, permissão negada).
-4. Entrega tudo na tabela `Critério | Caso de teste | Tipo (UI/API) | Passos | Resultado esperado`, com os edge cases listados à parte.
+1. Pergunta o contexto de execução que faltar (branch/PR, o que foi implementado, onde testar).
+2. Extrai os critérios de aceite verificáveis do texto da task, perguntando antes de seguir se algum critério estiver ambíguo.
+3. Mapeia cada critério em casos de teste — UI (Playwright) quando o critério é algo que se vê/clica, API (requisição HTTP) quando é comportamento de backend.
+4. Cobre além do caminho feliz (erro esperado, campo vazio, input inválido, permissão negada).
+5. Entrega tudo na tabela `Critério | Caso de teste | Tipo (UI/API) | Passos | Resultado esperado`, com os edge cases listados à parte.
+6. Pergunta se o dev quer ser guiado pela execução agora — se sim, conduz caso a caso, pedindo o resultado e a evidência de cada um antes de avançar para o próximo (sem executar nada sozinha, sem dar veredito final).
