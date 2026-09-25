@@ -3,3 +3,7 @@
 .env
 tmp/
 _to_delete/
+
+# runtime da skill qa-validacao-tasks (criado por scripts/setup.sh)
+.claude/skills/*/.venv/
+__pycache__/

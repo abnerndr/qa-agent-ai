@@ -23,54 +23,38 @@ Abra o Claude Code nesta pasta. O CLAUDE.md é lido automaticamente. Para uma de
 
 ### Instalar a skill `qa-validacao-tasks`
 
-Essa skill vive na conta do Claude (Cowork), não no repositório — por isso o projeto mantém uma cópia versionada do `SKILL.md` e um script que a grava em `.claude/skills/`.
+A fonte da verdade é `.claude/skills/qa-validacao-tasks/`, neste repositório: `SKILL.md` + `scripts/` (captura de evidências e relatório PDF). A instalação vai pro escopo de usuário (`~/.claude/skills/`), então a skill funciona em qualquer projeto aberto no Claude Code.
 
-```bash
-# instala todas as skills conhecidas pelo script
-./tools/scripts/install-skill.sh
-
-# instala só essa skill
-./tools/scripts/install-skill.sh qa-validacao-tasks
-
-# lista as skills que o script sabe instalar
-./tools/scripts/install-skill.sh --list
-```
-
-O script grava `.claude/skills/qa-validacao-tasks/SKILL.md`. A partir daí o Claude Code, rodando nesta pasta, já reconhece a skill sem depender de sync externo.
-
-### Distribuir a skill pra outros devs (qualquer projeto)
-
-A skill não depende deste repositório nem de um projeto específico — serve pra validar tasks em qualquer projeto Next.js/Node.js. Pra outro dev usar a skill no Claude Code dele, em qualquer projeto que ele abrir, ele só precisa instalar uma vez em escopo de usuário (não em escopo de projeto).
-
-`tools/scripts/install-skill-remote.sh` clona só a pasta da skill (sparse checkout, sem baixar o repositório inteiro) e grava direto em `~/.claude/skills/`. O dev não precisa clonar nada nem colar conteúdo — só precisa ter `git` e acesso de leitura a este repositório:
+**Qualquer dev, direto do GitHub** (precisa de `git` e acesso de leitura ao repo):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/abnerndr/qa-agent-ai/master/tools/scripts/install-skill-remote.sh | bash
 ```
 
-Ou, se preferir sem `curl | bash`:
+**A partir deste checkout** (pra testar mudança local antes do push):
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/abnerndr/qa-agent-ai.git /tmp/qa-agent-ai-tmp
-cd /tmp/qa-agent-ai-tmp && git sparse-checkout set tools/scripts
-bash tools/scripts/install-skill-remote.sh
-cd - && rm -rf /tmp/qa-agent-ai-tmp
+./tools/scripts/install-skill.sh            # qa-validacao-tasks
+./tools/scripts/install-skill.sh --list     # skills do repositório
 ```
 
-Rodar de novo depois de uma atualização da skill neste repositório sobrescreve `~/.claude/skills/qa-validacao-tasks` com a versão mais recente — sem precisar colar nada manualmente de novo.
+As duas formas copiam a skill e rodam `scripts/setup.sh`, que cria `~/.claude/skills/qa-validacao-tasks/.venv` com Playwright + Chromium (~115 MB na primeira vez). Esse runtime precisa de [`uv`](https://docs.astral.sh/uv/) ou `python3-venv`. Pule o setup com `QA_SKIP_SETUP=1`. Rodar de novo atualiza a skill e o Playwright.
+
+Opcional: defina onde ficam os relatórios (padrão `~/qa-relatorios`):
+
+```bash
+echo 'export QA_REPORTS_DIR="$HOME/qa-relatorios"' >> ~/.zshrc
+```
 
 ### Usar a skill `qa-validacao-tasks`
 
-Cole o texto da task (geralmente uma mensagem corrida de Slack, com critérios de aceite misturados a contexto) e peça para validar — não precisa mencionar "Playwright" ou "teste" explicitamente, frases como "confere se isso está pronto" ou "monta o QA gate" já acionam a skill. Também dá para chamar direto:
+Cole o texto da task (geralmente a mensagem do Slack, com critérios misturados a contexto) e peça pra validar. Frases como "confere se isso está pronto" ou "monta o QA gate" já acionam a skill. Também dá pra chamar direto com `/qa-validacao-tasks`.
 
-```
-/qa-validacao-tasks
-```
+1. **Contexto**: pergunta o que faltar (branch/PR, o que foi feito, onde testar) e lê o diff quando tem acesso ao repositório.
+2. **Critérios**: extrai os critérios de aceite verificáveis e pergunta antes de seguir se algum estiver ambíguo.
+3. **Entrega × task**: lista as divergências (o que a entrega faz fora do escopo, e o que falta).
+4. **Plano**: tabela `Critério | Caso | Tipo (UI/API/Processo) | Passos | Esperado`, com os edge cases à parte.
+5. **Execução** (depois do seu ok): o agente roda os casos no ambiente indicado e captura prints, vídeos e respostas HTTP com `scripts/qa_evidencias.py`. Só leitura, e nunca envia formulário que crie dado real sem aprovação.
+6. **Relatório PDF** em `$QA_REPORTS_DIR/<projeto>-<pr>/relatorio.pdf`: resumo por critério, divergências, status e evidências de cada caso, **inclusive os que falharam**. Sem veredito: quem aprova é o dev/PM.
 
-A skill entrega um **plano de teste** (não executa nada nem declara aprovado/reprovado):
-1. Pergunta o contexto de execução que faltar (branch/PR, o que foi implementado, onde testar).
-2. Extrai os critérios de aceite verificáveis do texto da task, perguntando antes de seguir se algum critério estiver ambíguo.
-3. Mapeia cada critério em casos de teste — UI (Playwright) quando o critério é algo que se vê/clica, API (requisição HTTP) quando é comportamento de backend.
-4. Cobre além do caminho feliz (erro esperado, campo vazio, input inválido, permissão negada).
-5. Entrega tudo na tabela `Critério | Caso de teste | Tipo (UI/API) | Passos | Resultado esperado`, com os edge cases listados à parte.
-6. Pergunta se o dev quer ser guiado pela execução agora — se sim, conduz caso a caso, pedindo o resultado e a evidência de cada um antes de avançar para o próximo (sem executar nada sozinha, sem dar veredito final).
+Racional da execução pelo agente: [ADR-002](.claude/adr/adr-002-captura-de-evidencias-pelo-agente.md).

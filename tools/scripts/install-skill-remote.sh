@@ -10,7 +10,12 @@
 # o temporario. Sempre pega a versao mais recente do repositorio (branch
 # padrao), entao rodar de novo depois de uma atualizacao so sobrescreve.
 #
-# Requisitos: git >= 2.25, acesso de leitura ao repositorio.
+# Depois de copiar, roda scripts/setup.sh da skill (se existir), que cria o
+# runtime Python com Playwright + Chromium usado para capturar evidencias e
+# gerar o relatorio PDF. Pule com QA_SKIP_SETUP=1.
+#
+# Requisitos: git >= 2.25, acesso de leitura ao repositorio, uv ou
+# python3-venv (para o runtime de evidencias).
 #
 # Uso:
 #   ./install-skill-remote.sh                    # instala qa-validacao-tasks (default)
@@ -39,3 +44,8 @@ mkdir -p "$DEST"
 cp -r "$SRC/." "$DEST/"
 
 echo "[ok] $SKILL_NAME instalada em $DEST"
+
+if [ -f "$DEST/scripts/setup.sh" ] && [ "${QA_SKIP_SETUP:-0}" != "1" ]; then
+  echo "[info] preparando runtime de evidencias (Playwright + Chromium) ..."
+  bash "$DEST/scripts/setup.sh"
+fi
