@@ -7,3 +7,7 @@ _to_delete/
 # runtime da skill qa-validacao-tasks (criado por scripts/setup.sh)
 .claude/skills/*/.venv/
 __pycache__/
+
+# execucoes de QA: versiona so plano/run.json e o PDF (evidencias e HTML ficam locais)
+outputs/qa/*/evidencias/
+outputs/qa/*/relatorio.html

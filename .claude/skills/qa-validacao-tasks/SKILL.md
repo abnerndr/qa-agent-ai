@@ -46,12 +46,18 @@ Só começa quando o dev confirmar o ambiente e autorizar a execução.
 O script fica em `scripts/qa_evidencias.py`, na pasta desta skill (em geral `~/.claude/skills/qa-validacao-tasks`). Use o Python do runtime da skill:
 
 ```bash
-SKILL=~/.claude/skills/qa-validacao-tasks
-PY=$SKILL/.venv/bin/python
-QA="$PY $SKILL/scripts/qa_evidencias.py"
+SK=~/.claude/skills/qa-validacao-tasks
+qa() { "$SK/.venv/bin/python" "$SK/scripts/qa_evidencias.py" "$@"; }   # função, não variável: zsh não quebra "$QA" em palavras
 ```
 
-Se `$PY` não existir, rode `bash $SKILL/scripts/setup.sh` uma vez (instala Playwright e Chromium).
+Redefina a função em cada chamada de shell (o estado não persiste entre chamadas). Nos exemplos abaixo, `$QA` quer dizer `qa`. Se `.venv/bin/python` não existir, rode `bash $SK/scripts/setup.sh` uma vez (instala Playwright e Chromium).
+
+Armadilhas vistas em uso real:
+- `--nome` não pode começar com `-` (o argparse lê como opção). Ao derivar o nome da URL, tire a `/` inicial.
+- Ações do `fluxo` com JS longo: escreva a lista de ações num arquivo `.json` (via Python/heredoc) e passe o caminho. Escapar aspas inline no shell quebra fácil.
+- Uma mesma resposta pode servir de evidência de vários casos: capture uma vez com `--caso CTxx` e anexe aos outros com `qa caso <run_dir> CTyy --evidencia evidencias/<arquivo>`.
+- Se o elemento existe mas o clique falha com "outside of the viewport", teste a rolagem real com `{"wheel": 8000}` antes de concluir. Pode ser bug da página (rolagem travada), e isso também é achado.
+- Tentativa descartada (ex.: seletor errado no próprio script): mova os arquivos para `evidencias/_descartado/` e limpe a lista `evidencias` do caso. Falha da aplicação nunca é descartada.
 
 Pasta da execução: `${QA_REPORTS_DIR:-$HOME/qa-relatorios}/<projeto>-<pr-ou-task>/`. Nunca grave evidências dentro do repositório testado.
 

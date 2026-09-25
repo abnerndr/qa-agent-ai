@@ -1,0 +1,47 @@
+{
+  "titulo": "PR #516 — Padronização de Paginação: URLs, Links Rastreáveis e Componente Único",
+  "projeto": "mundo-zero-km-nextjs",
+  "pr": "https://github.com/pyxys-inteligencia-digital/mundo-zero-km-nextjs/pull/516",
+  "branch": "refactor/default-pagination-component @ 5d643ca7",
+  "ambiente": "http://localhost:3000 (next dev)",
+  "responsavel": "Abner A Ananias (dev) — evidências capturadas pelo agente de QA",
+  "criterios": [
+    {"id": "CA1", "texto": "Toda página paginada (Notícias, Notícias-categoria, Ofertas, Webstories, Autores, Festival do Carro Verde) tem URL própria em path (/page/n) acessível via link real, verificável via view-source sem depender de JS."},
+    {"id": "CA2", "texto": "Canonical de cada página aponta para si mesma, nunca para a página 1 (exceto a própria página 1)."},
+    {"id": "CA3", "texto": "Um único componente de paginação é usado nas 6 seções com URL + /search (client-side)."},
+    {"id": "CA4", "texto": "/search pagina os resultados sem regressão de UX, sem exigir mudança de indexação (segue noindex)."},
+    {"id": "CA5", "texto": "Decisão de redirect 301 para ?page= de Ofertas já indexadas, tomada com base em relatório do Search Console (não automática)."},
+    {"id": "FORA", "texto": "Fora de escopo que não pode aparecer: rel=next/rel=prev."},
+    {"id": "EXTRA", "texto": "Não é critério da task — proteções entregues pelo PR (308 da página 1, 404 de página inválida/fora do range) conferidas como regressão."}
+  ],
+  "divergencias": [
+    {"id": "D1", "descricao": "CA5 pede decisão do 301 de /ofertas?page= baseada no Search Console, caso a caso (em aberto na task). O PR implementa 301 automático para qualquer /ofertas?page=N (middleware.ts + resolve-offers-page-redirect.ts).", "decisao": ""},
+    {"id": "D2", "descricao": "Canonical de Reviews está fora de escopo (PRD separado). O PR altera o canonical de /review/page/N (ignora o canonical do CMS em páginas > 1) — src/components/app/review/utils/seo.ts:80.", "decisao": ""},
+    {"id": "D3", "descricao": "Truncamento visual dos números de página está fora de escopo (follow-up). O PR implementa reticências e janela reduzida no mobile (src/lib/pagination/get-visible-pages.ts).", "decisao": ""},
+    {"id": "D4", "descricao": "Layout visual dos controles seria anexado pelo Vinicius (fora do documento). O PR entrega layout 'Segmented Group' — confirmar se é o layout aprovado.", "decisao": ""}
+  ],
+  "pontos_em_aberto": [
+    "Tamanho de página de /search: a task deixa em aberto (depende do volume médio de resultados); o PR fixou 12 itens.",
+    "Interpretação de 'sem regressão de UX' (CA4) usada neste plano: mesmos resultados, troca de termo volta para a página 1, scroll ao topo ao paginar, evento de busca no dataLayer sem duplicar, noindex mantido — não confirmada pelo PM.",
+    "Relatório do Search Console sobre URLs /ofertas?page=N indexadas (premissa em aberto da task)."
+  ],
+  "casos": [
+    {"id": "CT01", "criterio": "CA1", "tipo": "API", "titulo": "Links reais no HTML do servidor (sem JS) nas 6 seções", "passos": "GET da página 1 e da página 2 de cada seção; extrair os href de paginação e procurar <button> dentro do nav de paginação.", "esperado": "<a href> para /page/N no HTML cru de todas as seções; nenhum <button> de paginação."},
+    {"id": "CT02", "criterio": "CA1", "tipo": "API", "titulo": "URL /page/2 responde 200 nas 6 seções", "passos": "GET <base>/page/2 sem seguir redirect.", "esperado": "200 em todas."},
+    {"id": "CT03", "criterio": "CA1", "tipo": "UI", "titulo": "Navegação real por link muda a URL", "passos": "Em cada seção: abrir a base, clicar em 2, depois 3, depois 1.", "esperado": "URL /page/2 → /page/3 → base (sem /page/1); conteúdo muda."},
+    {"id": "CT04", "criterio": "CA1", "tipo": "UI", "titulo": "Filtros de Ofertas como query em cima do path", "passos": "Abrir /ofertas?brands=<marca>, conferir href da página 2 e clicar.", "esperado": "/ofertas/page/2?brands=<marca> com o filtro aplicado."},
+    {"id": "CT05", "criterio": "CA1", "tipo": "API", "titulo": "Rotas novas SSR entregam conteúdo diferente por página", "passos": "GET página 1 e 2 de categoria, autor e festival; comparar o primeiro item no HTML do servidor.", "esperado": "Itens diferentes já no HTML do servidor."},
+    {"id": "CT06", "criterio": "CA2", "tipo": "API", "titulo": "Canonical da página 2 é auto-referenciado", "passos": "GET <base>/page/2 e extrair <link rel=canonical>.", "esperado": "Canonical termina em /page/2 em todas as seções."},
+    {"id": "CT07", "criterio": "CA2", "tipo": "API", "titulo": "Canonical da página 1 aponta para a base", "passos": "GET <base> e extrair <link rel=canonical>.", "esperado": "Canonical = base, sem /page/1."},
+    {"id": "CT08", "criterio": "CA2", "tipo": "API", "titulo": "Canonical de Ofertas página 2 com filtro", "passos": "GET /ofertas/page/2?brands=<marca> e extrair canonical.", "esperado": "Registrar valor (tiering de filtro é fora de escopo); esperado /ofertas/page/2."},
+    {"id": "CT09", "criterio": "CA3", "tipo": "UI", "titulo": "Mesmo componente nas 6 seções + /search", "passos": "Print do nav de paginação em cada seção e em /search; conferir remoção dos componentes antigos no código.", "esperado": "Mesmo componente visual; arquivos antigos removidos."},
+    {"id": "CT10", "criterio": "CA4", "tipo": "UI", "titulo": "/search pagina no client", "passos": "Buscar termo com > 12 resultados, ir à página 2.", "esperado": "12 itens por página, URL não muda, scroll ao topo."},
+    {"id": "CT11", "criterio": "CA4", "tipo": "UI", "titulo": "Troca de termo volta para a página 1", "passos": "Na página 2, buscar outro termo.", "esperado": "Página 1 ativa."},
+    {"id": "CT12", "criterio": "CA4", "tipo": "UI", "titulo": "Evento de busca no dataLayer não duplica ao paginar", "passos": "Buscar, ler dataLayer, paginar, ler de novo.", "esperado": "Mesmo número de eventos de busca antes e depois de paginar."},
+    {"id": "CT13", "criterio": "CA4", "tipo": "UI", "titulo": "/search segue noindex", "passos": "Ler meta robots renderizada de /search?q=carro.", "esperado": "noindex."},
+    {"id": "CT14", "criterio": "CA4", "tipo": "UI", "titulo": "Poucos resultados não mostram paginação", "passos": "Buscar termo com ≤ 12 resultados.", "esperado": "Componente não aparece."},
+    {"id": "CT15", "criterio": "CA5", "tipo": "Processo", "titulo": "Decisão do 301 baseada no Search Console", "passos": "Pedir ao dev o relatório do Search Console e a decisão registrada; conferir comportamento atual de /ofertas?page=3.", "esperado": "Evidência da decisão existe, ou D1 tratada."},
+    {"id": "CT16", "criterio": "FORA", "tipo": "API", "titulo": "Sem rel=next/prev", "passos": "GET <base>/page/2 e procurar rel=\"next\"/\"prev\".", "esperado": "Nenhuma ocorrência."},
+    {"id": "CT17", "criterio": "EXTRA", "tipo": "API", "titulo": "308 da página 1 e 404 de página inválida/fora do range", "passos": "GET /x/page/1, /noticias/page/0, /page/abc, /page/2.5 e última+1.", "esperado": "308 para a base; 404 nos inválidos."}
+  ]
+}

@@ -252,7 +252,7 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
     """Executa ações de um JSON: lista de objetos com UMA chave de ação cada.
 
     goto:URL · click:SELETOR · fill:[SELETOR, TEXTO] · press:[SELETOR, TECLA]
-    wait_url:GLOB · wait_selector:SELETOR · wait_ms:N · scroll:"bottom"|SELETOR
+    wait_url:GLOB · wait_selector:SELETOR · wait_ms:N · scroll:"bottom"|SELETOR · wheel:PIXELS
     print:NOME (screenshot da viewport) · print_full:NOME · print_el:[SELETOR, NOME]
     eval:[EXPRESSAO_JS, NOME] (salva o resultado em .txt) · assert_url:REGEX
     """
@@ -293,6 +293,20 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
                     page.wait_for_selector(valor)
                 elif tipo == "wait_ms":
                     page.wait_for_timeout(int(valor))
+                elif tipo == "wheel":
+                    # rolagem real de usuário (roda do mouse no centro da tela)
+                    vp = page.viewport_size or {"width": 1280, "height": 800}
+                    page.mouse.move(vp["width"] / 2, vp["height"] / 2)
+                    restante = int(valor)
+                    while restante > 0:
+                        page.mouse.wheel(0, min(400, restante))
+                        restante -= 400
+                        page.wait_for_timeout(50)
+                    page.wait_for_timeout(500)
+                    pos = page.evaluate(
+                        "({winY: Math.round(scrollY), bodyTop: document.body.scrollTop})"
+                    )
+                    log.append(f"    → {json.dumps(pos)}")
                 elif tipo == "scroll":
                     if valor == "bottom":
                         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")

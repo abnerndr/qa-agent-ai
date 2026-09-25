@@ -1,0 +1,430 @@
+{
+  "titulo": "PR #516 — Padronização de Paginação: URLs, Links Rastreáveis e Componente Único",
+  "projeto": "mundo-zero-km-nextjs",
+  "pr": "https://github.com/pyxys-inteligencia-digital/mundo-zero-km-nextjs/pull/516",
+  "branch": "refactor/default-pagination-component @ 5d643ca7",
+  "ambiente": "http://localhost:3000 (next dev)",
+  "responsavel": "Abner A Ananias (dev) — evidências capturadas pelo agente de QA",
+  "criterios": [
+    {
+      "id": "CA1",
+      "texto": "Toda página paginada (Notícias, Notícias-categoria, Ofertas, Webstories, Autores, Festival do Carro Verde) tem URL própria em path (/page/n) acessível via link real, verificável via view-source sem depender de JS."
+    },
+    {
+      "id": "CA2",
+      "texto": "Canonical de cada página aponta para si mesma, nunca para a página 1 (exceto a própria página 1)."
+    },
+    {
+      "id": "CA3",
+      "texto": "Um único componente de paginação é usado nas 6 seções com URL + /search (client-side)."
+    },
+    {
+      "id": "CA4",
+      "texto": "/search pagina os resultados sem regressão de UX, sem exigir mudança de indexação (segue noindex)."
+    },
+    {
+      "id": "CA5",
+      "texto": "Decisão de redirect 301 para ?page= de Ofertas já indexadas, tomada com base em relatório do Search Console (não automática)."
+    },
+    {
+      "id": "FORA",
+      "texto": "Fora de escopo que não pode aparecer: rel=next/rel=prev."
+    },
+    {
+      "id": "EXTRA",
+      "texto": "Não é critério da task — proteções entregues pelo PR (308 da página 1, 404 de página inválida/fora do range) conferidas como regressão."
+    }
+  ],
+  "divergencias": [
+    {
+      "id": "D1",
+      "descricao": "CA5 pede decisão do 301 de /ofertas?page= baseada no Search Console, caso a caso (em aberto na task). O PR implementa 301 automático para qualquer /ofertas?page=N (middleware.ts + resolve-offers-page-redirect.ts).",
+      "decisao": ""
+    },
+    {
+      "id": "D2",
+      "descricao": "Canonical de Reviews está fora de escopo (PRD separado). O PR altera o canonical de /review/page/N (ignora o canonical do CMS em páginas > 1) — src/components/app/review/utils/seo.ts:80.",
+      "decisao": ""
+    },
+    {
+      "id": "D3",
+      "descricao": "Truncamento visual dos números de página está fora de escopo (follow-up). O PR implementa reticências e janela reduzida no mobile (src/lib/pagination/get-visible-pages.ts).",
+      "decisao": ""
+    },
+    {
+      "id": "D4",
+      "descricao": "Layout visual dos controles seria anexado pelo Vinicius (fora do documento). O PR entrega layout 'Segmented Group' — confirmar se é o layout aprovado.",
+      "decisao": ""
+    }
+  ],
+  "pontos_em_aberto": [
+    "Tamanho de página de /search: a task deixa em aberto (depende do volume médio de resultados); o PR fixou 12 itens.",
+    "Interpretação de 'sem regressão de UX' (CA4) usada neste plano: mesmos resultados, troca de termo volta para a página 1, scroll ao topo ao paginar, evento de busca no dataLayer sem duplicar, noindex mantido — não confirmada pelo PM.",
+    "Relatório do Search Console sobre URLs /ofertas?page=N indexadas (premissa em aberto da task).",
+    "ACHADO (CT03): /festival-do-carro-verde não rola em Chromium headless 1280×800 (html com altura 0; body 7004px). A paginação fica inalcançável rolando. O commit do PR não mexe no layout do festival, então provavelmente já existia antes. Confirmar num navegador real e, se reproduzir, abrir bug separado.",
+    "ACHADO (CT17): soft 404 em noticias, noticias/[cat], ofertas e autores. Página inválida ou fora do range responde 200 com canonical auto-referenciado (ex.: /ofertas/page/99). Mesmo mecanismo de loading.tsx que o PR já contornou no middleware para o 308. Validar em next build/start antes do merge.",
+    "Ambiente: next dev local com flags de staging (x-robots-tag e meta robots noindex em todas as páginas). Status HTTP e canonical valem, mas indexação real só é verificável em produção."
+  ],
+  "casos": [
+    {
+      "id": "CT01",
+      "criterio": "CA1",
+      "tipo": "API",
+      "titulo": "Links reais no HTML do servidor (sem JS) nas 6 seções",
+      "passos": "GET da página 1 e da página 2 de cada seção; extrair os href de paginação e procurar <button> dentro do nav de paginação.",
+      "esperado": "<a href> para /page/N no HTML cru de todas as seções; nenhum <button> de paginação.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT01-noticias-p1.txt",
+        "evidencias/CT01-noticias-p2.txt",
+        "evidencias/CT01-categoria-p1.txt",
+        "evidencias/CT01-categoria-p2.txt",
+        "evidencias/CT01-ofertas-p1.txt",
+        "evidencias/CT01-ofertas-p2.txt",
+        "evidencias/CT01-webstories-p1.txt",
+        "evidencias/CT01-webstories-p2.txt",
+        "evidencias/CT01-autor-p1.txt",
+        "evidencias/CT01-autor-p2.txt",
+        "evidencias/CT01-festival-p1.txt",
+        "evidencias/CT01-festival-p2.txt"
+      ],
+      "observado": "Nas 6 seções (páginas 1 e 2), o HTML do servidor traz <a href> para /page/N; 0 <button> de paginação; página atual em <span aria-current=\"page\">; na página 2 o link '1' e 'anterior' apontam para a base (0 links /page/1). Validado sem JS (curl, sem execução de script)."
+    },
+    {
+      "id": "CT02",
+      "criterio": "CA1",
+      "tipo": "API",
+      "titulo": "URL /page/2 responde 200 nas 6 seções",
+      "passos": "GET <base>/page/2 sem seguir redirect.",
+      "esperado": "200 em todas.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT02-noticias.txt",
+        "evidencias/CT02-categoria.txt",
+        "evidencias/CT02-ofertas.txt",
+        "evidencias/CT02-webstories.txt",
+        "evidencias/CT02-autor.txt",
+        "evidencias/CT02-festival.txt"
+      ],
+      "observado": "GET <base>/page/2 → HTTP 200 nas 6 seções (noticias, noticias/lancamentos, ofertas, webstories, autores/artur-leite, festival-do-carro-verde)."
+    },
+    {
+      "id": "CT03",
+      "criterio": "CA1",
+      "tipo": "UI",
+      "titulo": "Navegação real por link muda a URL",
+      "passos": "Em cada seção: abrir a base, clicar em 2, depois 3, depois 1.",
+      "esperado": "URL /page/2 → /page/3 → base (sem /page/1); conteúdo muda.",
+      "status": "divergente",
+      "evidencias": [
+        "evidencias/CT03-noticias-log.txt",
+        "evidencias/CT03-p1-titulo.txt",
+        "evidencias/CT03-p2.png",
+        "evidencias/CT03-p3.png",
+        "evidencias/CT03-p1-volta.png",
+        "evidencias/CT03-noticias.webm",
+        "evidencias/CT03-categoria-log.txt",
+        "evidencias/CT03-p1-titulo-2.txt",
+        "evidencias/CT03-p2-2.png",
+        "evidencias/CT03-p3-2.png",
+        "evidencias/CT03-p1-volta-2.png",
+        "evidencias/CT03-categoria.webm",
+        "evidencias/CT03-ofertas-log.txt",
+        "evidencias/CT03-p1-titulo-3.txt",
+        "evidencias/CT03-p2-3.png",
+        "evidencias/CT03-p3-3.png",
+        "evidencias/CT03-p1-volta-3.png",
+        "evidencias/CT03-ofertas.webm",
+        "evidencias/CT03-webstories-log.txt",
+        "evidencias/CT03-p1-titulo-4.txt",
+        "evidencias/CT03-p2-4.png",
+        "evidencias/CT03-p3-4.png",
+        "evidencias/CT03-p1-volta-4.png",
+        "evidencias/CT03-webstories.webm",
+        "evidencias/CT03-autor-log.txt",
+        "evidencias/CT03-p1-titulo-5.txt",
+        "evidencias/CT03-p2-5.png",
+        "evidencias/CT03-p3-5.png",
+        "evidencias/CT03-p1-volta-5.png",
+        "evidencias/CT03-autor.webm",
+        "evidencias/CT03-festival-log.txt",
+        "evidencias/CT03-p1-titulo-6.txt",
+        "evidencias/CT03-falha.png",
+        "evidencias/CT03-festival.webm",
+        "evidencias/CT03-festival-rolagem-e-js-log.txt",
+        "evidencias/CT03-topo.png",
+        "evidencias/CT03-apos-rolar-8000px.png",
+        "evidencias/CT03-diagnostico-rolagem.txt",
+        "evidencias/CT03-js-click-2.txt",
+        "evidencias/CT03-js-click-3.txt",
+        "evidencias/CT03-js-click-1.txt",
+        "evidencias/CT03-pagina-atual-final.txt",
+        "evidencias/CT03-festival-rolagem-e-js.webm"
+      ],
+      "observado": "Noticias, categoria, ofertas, webstories e autor: clique em 2 → /page/2, em 3 → /page/3, em 1 → volta para a base (sem /page/1), com conteúdo carregado e print de cada etapa + vídeo. FESTIVAL: em Chromium headless 1280×800 a página não rola (html com altura 0px, body 7004px, rolagem de 8000px com a roda do mouse mantém scroll em 0). O link da página 2 fica em y=6060 e não é alcançável rolando, e o clique do Playwright falha com 'element is outside of the viewport'. Acionando o link via JS, a navegação funciona (base → /page/2 → /page/3 → base). O commit 5d643ca7 não altera layout-content.tsx (festival-layout-wrapper: overflow hidden + contain) nem globals.css, então o bloqueio provavelmente já existia antes do PR. Confirmar num navegador real."
+    },
+    {
+      "id": "CT04",
+      "criterio": "CA1",
+      "tipo": "UI",
+      "titulo": "Filtros de Ofertas como query em cima do path",
+      "passos": "Abrir /ofertas?brands=<marca>, conferir href da página 2 e clicar.",
+      "esperado": "/ofertas/page/2?brands=<marca> com o filtro aplicado.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT04-filtro-log.txt",
+        "evidencias/CT04-apos-filtro.txt",
+        "evidencias/CT04-filtro-toyota.png",
+        "evidencias/CT04-falha.png",
+        "evidencias/CT04-filtro.webm",
+        "evidencias/CT04-filtro-4-marcas-log.txt",
+        "evidencias/CT04-pagina1-filtro.txt",
+        "evidencias/CT04-paginacao-pagina1.png",
+        "evidencias/CT04-pagina2-filtro.txt",
+        "evidencias/CT04-pagina2-topo.png",
+        "evidencias/CT04-pagina2-paginacao.png",
+        "evidencias/CT04-filtro-4-marcas.webm"
+      ],
+      "observado": "1ª tentativa com filtro Toyota: clique no botão da marca gera /ofertas?brands=toyota (filtro vai para a query), mas só há 1 oferta → sem paginação (esperado; print 'falha' dessa tentativa é o timeout procurando o link da página 2). Com ?brands=gwm,chevrolet,mitsubishi,hyundai: href da página 2 = /ofertas/page/2?brands=gwm%2Cchevrolet%2Cmitsubishi%2Chyundai; clique leva a essa URL, página ativa = 2 e os cards exibem só marcas do filtro (gwm 5, chevrolet 1, hyundai 1)."
+    },
+    {
+      "id": "CT05",
+      "criterio": "CA1",
+      "tipo": "API",
+      "titulo": "Rotas novas SSR entregam conteúdo diferente por página",
+      "passos": "GET página 1 e 2 de categoria, autor e festival; comparar o primeiro item no HTML do servidor.",
+      "esperado": "Itens diferentes já no HTML do servidor.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT05-comparacao-p1-p2.txt"
+      ],
+      "observado": "Categoria, autor e festival: página 1 e página 2 trazem listas diferentes já no HTML do servidor (0 itens em comum na lista paginada). No festival, 6 destaques fixos se repetem em todas as páginas por design (excluídos da lista paginada)."
+    },
+    {
+      "id": "CT06",
+      "criterio": "CA2",
+      "tipo": "API",
+      "titulo": "Canonical da página 2 é auto-referenciado",
+      "passos": "GET <base>/page/2 e extrair <link rel=canonical>.",
+      "esperado": "Canonical termina em /page/2 em todas as seções.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT01-noticias-p2.txt",
+        "evidencias/CT01-categoria-p2.txt",
+        "evidencias/CT01-ofertas-p2.txt",
+        "evidencias/CT01-webstories-p2.txt",
+        "evidencias/CT01-autor-p2.txt",
+        "evidencias/CT01-festival-p2.txt"
+      ],
+      "observado": "Canonical da página 2 = https://mundozerokm.com.br/<base>/page/2 nas 6 seções."
+    },
+    {
+      "id": "CT07",
+      "criterio": "CA2",
+      "tipo": "API",
+      "titulo": "Canonical da página 1 aponta para a base",
+      "passos": "GET <base> e extrair <link rel=canonical>.",
+      "esperado": "Canonical = base, sem /page/1.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT01-noticias-p1.txt",
+        "evidencias/CT01-categoria-p1.txt",
+        "evidencias/CT01-ofertas-p1.txt",
+        "evidencias/CT01-webstories-p1.txt",
+        "evidencias/CT01-autor-p1.txt",
+        "evidencias/CT01-festival-p1.txt"
+      ],
+      "observado": "Canonical da página 1 = https://mundozerokm.com.br/<base> (sem /page/1) nas 6 seções."
+    },
+    {
+      "id": "CT08",
+      "criterio": "CA2",
+      "tipo": "API",
+      "titulo": "Canonical de Ofertas página 2 com filtro",
+      "passos": "GET /ofertas/page/2?brands=<marca> e extrair canonical.",
+      "esperado": "Registrar valor (tiering de filtro é fora de escopo); esperado /ofertas/page/2.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT08-ofertas-p2-filtro.txt"
+      ],
+      "observado": "GET /ofertas/page/2?brands=gwm,chevrolet,mitsubishi,hyundai → 200, canonical = https://mundozerokm.com.br/ofertas/page/2 (sem os filtros). Tiering de filtro é fora de escopo, só registrado."
+    },
+    {
+      "id": "CT09",
+      "criterio": "CA3",
+      "tipo": "UI",
+      "titulo": "Mesmo componente nas 6 seções + /search",
+      "passos": "Print do nav de paginação em cada seção e em /search; conferir remoção dos componentes antigos no código.",
+      "esperado": "Mesmo componente visual; arquivos antigos removidos.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT09-noticias.png",
+        "evidencias/CT09-categoria.png",
+        "evidencias/CT09-ofertas.png",
+        "evidencias/CT09-webstories.png",
+        "evidencias/CT09-autor.png",
+        "evidencias/CT09-festival.png",
+        "evidencias/CT09-codigo.txt"
+      ],
+      "observado": "O mesmo componente (layout segmentado, página ativa destacada) aparece nas 6 seções: prints do nav em noticias, categoria, ofertas, webstories, autor e festival (festival com a cor de página ativa do tema). Em /search, mesmo componente em modo client (ver CT10). No código: 5 componentes antigos removidos pelo commit e 11 pontos importando @/components/common/Pagination. Observação visual (layout fora de escopo, D4): no festival (fundo claro), as setas anterior/próxima ativas aparecem em cinza-claro e parecem desabilitadas."
+    },
+    {
+      "id": "CT10",
+      "criterio": "CA4",
+      "tipo": "UI",
+      "titulo": "/search pagina no client",
+      "passos": "Buscar termo com > 12 resultados, ir à página 2.",
+      "esperado": "12 itens por página, URL não muda, scroll ao topo.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT10-search-log.txt",
+        "evidencias/CT10-1-carro-pagina1.txt",
+        "evidencias/CT10-2-scroll-antes-clique.txt",
+        "evidencias/CT10-2-paginacao-pagina1.png",
+        "evidencias/CT10-3-carro-pagina2.txt",
+        "evidencias/CT10-3-topo-apos-paginar.png",
+        "evidencias/CT10-4-carro-pagina5-ultima.txt",
+        "evidencias/CT10-4-paginacao-pagina5.png",
+        "evidencias/CT10-5-carro-pagina3-antes-trocar-termo.txt",
+        "evidencias/CT10-6-apos-trocar-termo-suv.txt",
+        "evidencias/CT10-6-paginacao-termo-suv.png",
+        "evidencias/CT10-search.webm"
+      ],
+      "observado": "q=carro: 59 resultados → 5 páginas. Página 1: 12 itens, página 2: 12 itens, página 5: 11 itens (59 = 4×12 + 11, nenhum resultado perdido). URL fica /search?q=carro em todas as páginas (client-side). Scroll em 2053px antes do clique, 0 depois (volta ao topo). Controles em modo client (<button>), como a task prevê para /search."
+    },
+    {
+      "id": "CT11",
+      "criterio": "CA4",
+      "tipo": "UI",
+      "titulo": "Troca de termo volta para a página 1",
+      "passos": "Na página 2, buscar outro termo.",
+      "esperado": "Página 1 ativa.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT10-5-carro-pagina3-antes-trocar-termo.txt",
+        "evidencias/CT10-6-apos-trocar-termo-suv.txt",
+        "evidencias/CT10-6-paginacao-termo-suv.png"
+      ],
+      "observado": "Na página 3 de 'carro', uma nova busca por 'suv' (61 resultados, 6 páginas) abre na página 1."
+    },
+    {
+      "id": "CT12",
+      "criterio": "CA4",
+      "tipo": "UI",
+      "titulo": "Evento de busca no dataLayer não duplica ao paginar",
+      "passos": "Buscar, ler dataLayer, paginar, ler de novo.",
+      "esperado": "Mesmo número de eventos de busca antes e depois de paginar.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT10-1-carro-pagina1.txt",
+        "evidencias/CT10-3-carro-pagina2.txt",
+        "evidencias/CT10-4-carro-pagina5-ultima.txt",
+        "evidencias/CT10-6-apos-trocar-termo-suv.txt"
+      ],
+      "observado": "dataLayer: 1 evento view_search_results para 'carro' nas páginas 1, 2, 5 e 3 (paginar não dispara de novo); o 2º evento só aparece ao trocar o termo para 'suv'."
+    },
+    {
+      "id": "CT13",
+      "criterio": "CA4",
+      "tipo": "UI",
+      "titulo": "/search segue noindex",
+      "passos": "Ler meta robots renderizada de /search?q=carro.",
+      "esperado": "noindex.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT13-search-log.txt",
+        "evidencias/CT13-robots-renderizado.txt",
+        "evidencias/CT13-html-servidor.txt"
+      ],
+      "observado": "Meta robots renderizada em /search?q=carro = 'noindex, nofollow' (aparece 2 vezes no <head>, duplicada). A meta é aplicada no client (useSeo), por isso não aparece no HTML do servidor. O header x-robots-tag noindex vem do ambiente de staging (x-staging-environment: true) e não serve como prova."
+    },
+    {
+      "id": "CT14",
+      "criterio": "CA4",
+      "tipo": "UI",
+      "titulo": "Poucos resultados não mostram paginação",
+      "passos": "Buscar termo com ≤ 12 resultados.",
+      "esperado": "Componente não aparece.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT14-cronos-log.txt",
+        "evidencias/CT14-poucos-resultados.txt",
+        "evidencias/CT14-cronos.png"
+      ],
+      "observado": "q=cronos: 1 resultado, sem componente de paginação."
+    },
+    {
+      "id": "CT15",
+      "criterio": "CA5",
+      "tipo": "Processo",
+      "titulo": "Decisão do 301 baseada no Search Console",
+      "passos": "Pedir ao dev o relatório do Search Console e a decisão registrada; conferir comportamento atual de /ofertas?page=3.",
+      "esperado": "Evidência da decisão existe, ou D1 tratada.",
+      "status": "pendente",
+      "evidencias": [
+        "evidencias/CT15-legado-ofertas-page-3.txt",
+        "evidencias/CT15-legado-ofertas-page-3-brands-gwm-utm-source-teste.txt",
+        "evidencias/CT15-legado-ofertas-page-1-brands-gwm.txt",
+        "evidencias/CT15-legado-ofertas-page-abc.txt",
+        "evidencias/CT15-legado-ofertas-page-0.txt"
+      ],
+      "observado": "Comportamento atual: 301 automático. /ofertas?page=3 → /ofertas/page/3; com filtro/UTM → /ofertas/page/3?brands=gwm&utm_source=teste (preservados); page=1 → /ofertas?brands=gwm; page=abc e page=0 → 200 sem redirect. Nenhuma evidência de relatório do Search Console nem de decisão registrada foi apresentada (D1 em aberto). Pendente até o dev anexar a evidência ou tratar a D1."
+    },
+    {
+      "id": "CT16",
+      "criterio": "FORA",
+      "tipo": "API",
+      "titulo": "Sem rel=next/prev",
+      "passos": "GET <base>/page/2 e procurar rel=\"next\"/\"prev\".",
+      "esperado": "Nenhuma ocorrência.",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT01-noticias-p2.txt",
+        "evidencias/CT01-categoria-p2.txt",
+        "evidencias/CT01-ofertas-p2.txt",
+        "evidencias/CT01-webstories-p2.txt",
+        "evidencias/CT01-autor-p2.txt",
+        "evidencias/CT01-festival-p2.txt",
+        "evidencias/CT01-noticias-p1.txt",
+        "evidencias/CT01-categoria-p1.txt",
+        "evidencias/CT01-ofertas-p1.txt",
+        "evidencias/CT01-webstories-p1.txt",
+        "evidencias/CT01-autor-p1.txt",
+        "evidencias/CT01-festival-p1.txt"
+      ],
+      "observado": "0 ocorrências de rel=\"next\"/rel=\"prev\" nas páginas 1 e 2 das 6 seções."
+    },
+    {
+      "id": "CT17",
+      "criterio": "EXTRA",
+      "tipo": "API",
+      "titulo": "308 da página 1 e 404 de página inválida/fora do range",
+      "passos": "GET /x/page/1, /noticias/page/0, /page/abc, /page/2.5 e última+1.",
+      "esperado": "308 para a base; 404 nos inválidos.",
+      "status": "divergente",
+      "evidencias": [
+        "evidencias/CT17-noticias-page-1.txt",
+        "evidencias/CT17-noticias-lancamentos-page-1-utm-source-x.txt",
+        "evidencias/CT17-webstories-page-1.txt",
+        "evidencias/CT17-ofertas-page-1.txt",
+        "evidencias/CT17-autores-artur-leite-page-1.txt",
+        "evidencias/CT17-festival-do-carro-verde-page-1.txt",
+        "evidencias/CT17-noticias-page-0.txt",
+        "evidencias/CT17-noticias-page-1-2.txt",
+        "evidencias/CT17-noticias-page-2-5.txt",
+        "evidencias/CT17-noticias-page-abc.txt",
+        "evidencias/CT17-noticias-page-38.txt",
+        "evidencias/CT17-noticias-page-39.txt",
+        "evidencias/CT17-ofertas-page-99.txt",
+        "evidencias/CT17-webstories-page-999.txt",
+        "evidencias/CT17-autores-artur-leite-page-99.txt",
+        "evidencias/CT17-festival-do-carro-verde-page-99.txt",
+        "evidencias/CT17-noticias-lancamentos-page-999.txt",
+        "evidencias/CT17-classificacao.txt"
+      ],
+      "observado": "308 da página 1 → base OK nas 6 seções, com query preservada. Página inválida (0, -1, 2.5, abc) e fora do range (noticias/39, lancamentos/999, ofertas/99, autores/99): HTTP 200 com not-found injetado durante o streaming (soft 404), com <title> '— Página N' e canonical auto-referenciado para a página inexistente. 404 real só em webstories/999 e festival/99. Não é critério de aceite, mas afeta o sinal de SEO que a task busca. Ver CT17-classificacao.txt."
+    }
+  ],
+  "data": "2026-09-25",
+  "task": "[Mundo ZeroKM] Padronização de Paginação: URLs, Links Rastreáveis e Componente Único\n\nObjetivo: Padronizar todas as listagens paginadas do site — URL própria em path (/page/n), canonical auto-referenciado por página, link real (<a href>/<Link href>) — consolidando as implementações num único componente de paginação reutilizável, e reaproveitar esse componente em /search para resolver o problema de performance/UX (sem exigência de URL/canonical, página segue noindex).\n\nRequisitos:\n- Componente único com controles <Link href> real, usado nas 6 seções com URL + /search.\n- Notícias: trocar useState por navegação real em /noticias/page/[n].\n- Ofertas: migrar ?page=n para /ofertas/page/n; filtros como query (/ofertas/page/2?brands=toyota); link real; avaliar 301 das URLs ?page= indexadas (checar Search Console antes).\n- Webstories: trocar <button onClick> por link real.\n- Notícias por categoria: rota SSR /noticias/[categoriaId]/page/[n].\n- Autores: rota SSR /autores/[slug]/page/[n].\n- Festival do Carro Verde: rota SSR equivalente.\n- /search: reaproveitar o componente para paginar client-side (segue noindex).\n\nCritérios de aceite:\n- Toda página paginada (Notícias, Notícias-categoria, Ofertas, Webstories, Autores, Festival do Carro Verde) tem URL própria em path (/page/n) acessível via link real, verificável via view-source sem depender de JS.\n- Canonical de cada página aponta para si mesma, nunca para a página 1 (exceto a própria página 1).\n- Um único componente de paginação é usado nas 6 seções com URL + /search (client-side).\n- /search pagina os resultados sem regressão de UX, sem exigir mudança de indexação (segue noindex).\n- Decisão de redirect 301 para ?page= de Ofertas já indexadas, tomada com base em relatório do Search Console (não automática).\n\nFora de escopo: noindex/tiering de filtros; rel=next/prev; infinite scroll; truncamento visual dos números e 6→15 itens; canonical de Reviews; layout visual dos controles (a anexar por Vinicius).\n\nEm aberto: URLs /ofertas?page=N indexadas (Search Console, 301 caso a caso); volume médio de /search para tamanho de página; comportamento real de categoria/autores/festival."
+}
