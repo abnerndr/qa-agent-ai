@@ -87,6 +87,13 @@ Pasta da execução: `${QA_REPORTS_DIR:-$HOME/qa-relatorios}/<projeto>-<pr-ou-ta
      - Na dúvida, prefira print antes e depois da ação.
    - **Vários fluxos no mesmo caso** (ex.: uma seção por fluxo): sempre passe `--nome` diferente em cada um. Prints, evals e falhas saem prefixados com esse nome (`CT03-autor-p2.png`).
      Ações: `goto`, `click`, `fill`, `press`, `wait_url`, `wait_selector`, `wait_ms`, `scroll`, `print`, `print_full`, `print_el`, `eval`, `assert_url`. Veja o docstring de `cmd_fluxo`.
+   - **Lighthouse** (performance, SEO, acessibilidade, boas práticas). Roda dentro da execução, headless, com o Chromium do Playwright e sem acesso ao display, então nunca abre janela no Windows/WSLg. Precisa de Node/npx:
+     `$QA lighthouse <run_dir> <url> --caso CT18 --nome secao-p1 [--desktop] [--categorias seo,performance]`
+     Salva resumo `.txt` (scores, métricas, audits abaixo de 90) e o relatório `.html` completo como anexo. Regras:
+     - Em páginas de listagem/SEO, rode na página base e numa página interna e compare as duas: regressão é diferença entre elas, não nota absoluta.
+     - **Performance só vale em build de produção** (`next build && next start`) ou staging. Em `next dev` registre como indicativo e deixe o caso `pendente`.
+     - Em ambiente com flag de staging, "Page is blocked from indexing" é esperado. Não conte como falha.
+     - Quando um audit falhar, investigue a causa (ex.: metadata emitida no `<body>` por streaming) antes de registrar. Achado sem causa vira `pendente`, não `divergente`.
    - **Evidência de outra fonte** (saída de comando, arquivo enviado pelo dev): salve em `<run_dir>/evidencias/` e anexe com `$QA caso <run_dir> CT04 --evidencia evidencias/arquivo.txt`.
 3. **Registrar o status logo depois de cada caso**, com o que foi observado de fato:
    `$QA caso <run_dir> CT01 --status confirmado|divergente|pendente|pulado --observado "…"`

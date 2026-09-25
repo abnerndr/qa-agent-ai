@@ -32,7 +32,7 @@
     },
     {
       "id": "EXTRA",
-      "texto": "Não é critério da task — proteções entregues pelo PR (308 da página 1, 404 de página inválida/fora do range) conferidas como regressão."
+      "texto": "Não é critério da task. Conferido como regressão: proteções entregues pelo PR (308 da página 1, 404 de página inválida/fora do range) e Lighthouse (SEO e performance) nas páginas 1 e 2."
     }
   ],
   "divergencias": [
@@ -63,7 +63,9 @@
     "Relatório do Search Console sobre URLs /ofertas?page=N indexadas (premissa em aberto da task).",
     "ACHADO (CT03): /festival-do-carro-verde não rola em Chromium headless 1280×800 (html com altura 0; body 7004px). A paginação fica inalcançável rolando. O commit do PR não mexe no layout do festival, então provavelmente já existia antes. Confirmar num navegador real e, se reproduzir, abrir bug separado.",
     "ACHADO (CT17): soft 404 em noticias, noticias/[cat], ofertas e autores. Página inválida ou fora do range responde 200 com canonical auto-referenciado (ex.: /ofertas/page/99). Mesmo mecanismo de loading.tsx que o PR já contornou no middleware para o 308. Validar em next build/start antes do merge.",
-    "Ambiente: next dev local com flags de staging (x-robots-tag e meta robots noindex em todas as páginas). Status HTTP e canonical valem, mas indexação real só é verificável em produção."
+    "Ambiente: next dev local com flags de staging (x-robots-tag e meta robots noindex em todas as páginas). Status HTTP e canonical valem, mas indexação real só é verificável em produção.",
+    "ACHADO (CT18): nas rotas com loading.tsx (noticias, noticias/[cat], ofertas, autores), <title>, meta description e canonical são emitidos no <body> para Chrome e Googlebot (streaming metadata do Next 16). Bingbot e facebookexternalhit recebem no <head>. O Lighthouse não detecta description nem canonical. Já existia antes da PR e afeta igual as páginas 1 e 2. Sugestão: task separada para avaliar htmlLimitedBots ou a remoção do loading.tsx nessas rotas.",
+    "CT19 (performance) pendente: rodar `qa lighthouse` contra build de produção (next build && next start -p 3001) ou staging para ter números válidos."
   ],
   "casos": [
     {
@@ -422,6 +424,56 @@
         "evidencias/CT17-classificacao.txt"
       ],
       "observado": "308 da página 1 → base OK nas 6 seções, com query preservada. Página inválida (0, -1, 2.5, abc) e fora do range (noticias/39, lancamentos/999, ofertas/99, autores/99): HTTP 200 com not-found injetado durante o streaming (soft 404), com <title> '— Página N' e canonical auto-referenciado para a página inexistente. 404 real só em webstories/999 e festival/99. Não é critério de aceite, mas afeta o sinal de SEO que a task busca. Ver CT17-classificacao.txt."
+    },
+    {
+      "id": "CT18",
+      "status": "confirmado",
+      "evidencias": [
+        "evidencias/CT18-noticias-p1-mobile.txt",
+        "evidencias/CT18-noticias-p1-mobile.report.html",
+        "evidencias/CT18-noticias-p2-mobile.txt",
+        "evidencias/CT18-noticias-p2-mobile.report.html",
+        "evidencias/CT18-categoria-p1-mobile.txt",
+        "evidencias/CT18-categoria-p1-mobile.report.html",
+        "evidencias/CT18-categoria-p2-mobile.txt",
+        "evidencias/CT18-categoria-p2-mobile.report.html",
+        "evidencias/CT18-ofertas-p1-mobile.txt",
+        "evidencias/CT18-ofertas-p1-mobile.report.html",
+        "evidencias/CT18-ofertas-p2-mobile.txt",
+        "evidencias/CT18-ofertas-p2-mobile.report.html",
+        "evidencias/CT18-webstories-p1-mobile.txt",
+        "evidencias/CT18-webstories-p1-mobile.report.html",
+        "evidencias/CT18-webstories-p2-mobile.txt",
+        "evidencias/CT18-webstories-p2-mobile.report.html",
+        "evidencias/CT18-autor-p1-mobile.txt",
+        "evidencias/CT18-autor-p1-mobile.report.html",
+        "evidencias/CT18-autor-p2-mobile.txt",
+        "evidencias/CT18-autor-p2-mobile.report.html",
+        "evidencias/CT18-festival-p1-mobile.txt",
+        "evidencias/CT18-festival-p1-mobile.report.html",
+        "evidencias/CT18-festival-p2-mobile.txt",
+        "evidencias/CT18-festival-p2-mobile.report.html",
+        "evidencias/CT18-CT19-comparativo.txt"
+      ],
+      "criterio": "EXTRA",
+      "titulo": "Lighthouse SEO nas páginas 1 e 2 das 6 seções",
+      "tipo": "API",
+      "passos": "Lighthouse 12 (mobile) em <base> e <base>/page/2 de cada seção; comparar audits de SEO entre página 1 e página 2.",
+      "esperado": "Página 2 sem regressão de SEO em relação à página 1 (title, meta description, canonical válido, links rastreáveis). 'Blocked from indexing' é esperado no ambiente de staging.",
+      "observado": "SEO da página 2 = SEO da página 1 nas 6 seções (58 em noticias/categoria/ofertas/autor, 69 em webstories/festival): a paginação não regrediu SEO. 'Blocked from indexing' vem da flag de staging. ACHADO fora do escopo da PR: nas rotas com loading.tsx (noticias, categoria, ofertas, autor) a meta description e o canonical ficam no <body> para Chrome e Googlebot (streaming metadata do Next 16) e o Lighthouse não os detecta. Afeta igual as páginas 1 e 2."
+    },
+    {
+      "id": "CT19",
+      "status": "pendente",
+      "evidencias": [
+        "evidencias/CT18-CT19-comparativo.txt"
+      ],
+      "criterio": "EXTRA",
+      "titulo": "Lighthouse Performance nas páginas 1 e 2 das 6 seções",
+      "tipo": "API",
+      "passos": "Mesmas execuções do CT18; registrar score e métricas (FCP, LCP, TBT, CLS, SI).",
+      "esperado": "Números válidos só em build de produção (next build && next start). Em next dev, registro indicativo.",
+      "observado": "Executado em next dev: Perf 12–60, LCP 1,9–30,8 s, TBT 1,5–4,0 s (tabela no comparativo). Esses números não valem como medição de performance (sem minificação, com HMR). Pendente de execução em build de produção (next build && next start) ou staging. Diferença p1→p2 dentro do ruído, exceto ofertas (38→12), a confirmar em produção."
     }
   ],
   "data": "2026-09-25",

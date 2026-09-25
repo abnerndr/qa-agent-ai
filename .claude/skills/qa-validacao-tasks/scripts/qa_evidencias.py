@@ -13,6 +13,7 @@ Subcomandos:
   http       requisição HTTP sem seguir redirect; salva status, headers e trechos do body
   print      screenshot de uma URL (desktop/mobile, com ou sem JS, página inteira ou seletor)
   fluxo      sequência de ações no navegador (goto/click/fill/...) com vídeo e prints
+  lighthouse auditoria Lighthouse (performance, SEO, acessibilidade, boas práticas)
   caso       cria/atualiza um caso no run.json (status, observado, esperado...)
   relatorio  gera relatorio.html + relatorio.pdf a partir do run.json
 
@@ -370,6 +371,97 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+# ---------------------------------------------------------------- lighthouse
+
+LH_VERSAO = "12"
+LH_METRICAS = (
+    ("first-contentful-paint", "FCP"),
+    ("largest-contentful-paint", "LCP"),
+    ("total-blocking-time", "TBT"),
+    ("cumulative-layout-shift", "CLS"),
+    ("speed-index", "Speed Index"),
+)
+LH_MODOS_IGNORADOS = {"notApplicable", "manual", "informative", "error"}
+
+
+def cmd_lighthouse(a: argparse.Namespace) -> None:
+    import shutil
+    import subprocess
+
+    run_dir = Path(a.run_dir)
+    if not shutil.which("npx"):
+        sys.exit("[erro] Lighthouse precisa de Node/npx no PATH")
+    with _playwright()() as p:
+        chrome = p.chromium.executable_path
+    if not Path(chrome).exists():
+        sys.exit(f"[erro] Chromium do Playwright não encontrado em {chrome} — rode scripts/setup.sh")
+
+    preset = "desktop" if a.desktop else "mobile"
+    base = proximo_arquivo(run_dir, a.caso, f"{a.nome or 'lighthouse'}-{preset}", "")
+    cmd = [
+        "npx", "-y", f"lighthouse@{LH_VERSAO}", a.url, "--quiet",
+        "--output=json", "--output=html", f"--output-path={base}",
+        "--chrome-flags=--headless=new --no-sandbox --disable-dev-shm-usage",
+        f"--only-categories={a.categorias}",
+    ]
+    if a.desktop:
+        cmd.append("--preset=desktop")
+    # sem DISPLAY/WAYLAND_DISPLAY: no WSL (WSLg) o Chrome nunca abre janela no Windows,
+    # mesmo que o --headless seja ignorado. Roda só dentro da execução dos testes.
+    env = {k: v for k, v in __import__("os").environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+    env["CHROME_PATH"] = chrome
+    proc = subprocess.run(
+        cmd, env=env,
+        capture_output=True, text=True, timeout=a.timeout,
+    )
+    json_file = base.with_name(base.name + ".report.json")
+    html_file = base.with_name(base.name + ".report.html")
+    if proc.returncode != 0 or not json_file.exists():
+        erro = proximo_arquivo(run_dir, a.caso, f"{a.nome or 'lighthouse'}-{preset}-erro", ".txt")
+        erro.write_text(f"$ {' '.join(cmd)}\n\n{proc.stdout}\n{proc.stderr}", encoding="utf-8")
+        anexar(run_dir, a.caso, [erro])
+        sys.exit(f"[erro] Lighthouse falhou (código {proc.returncode}) — ver {erro}")
+
+    lhr = json.loads(json_file.read_text(encoding="utf-8"))
+    audits = lhr.get("audits", {})
+    linhas = [
+        f"# Lighthouse {lhr.get('lighthouseVersion')} — {preset}",
+        f"URL: {lhr.get('finalDisplayedUrl') or a.url}",
+        f"Data: {lhr.get('fetchTime')}",
+        "",
+        "## Scores (0–100)",
+    ]
+    for cat in lhr.get("categories", {}).values():
+        score = cat.get("score")
+        linhas.append(f"  {cat.get('title'):<16} {'—' if score is None else round(score * 100)}")
+    if "performance" in lhr.get("categories", {}):
+        linhas += ["", "## Métricas"]
+        for chave, rotulo in LH_METRICAS:
+            au = audits.get(chave, {})
+            linhas.append(f"  {rotulo:<12} {au.get('displayValue', '—')}")
+    for cat_id, cat in lhr.get("categories", {}).items():
+        falhas = []
+        for ref in cat.get("auditRefs", []):
+            au = audits.get(ref.get("id"), {})
+            if au.get("scoreDisplayMode") in LH_MODOS_IGNORADOS or au.get("score") is None:
+                continue
+            if au["score"] < 0.9 and (ref.get("weight", 0) > 0 or cat_id == "seo"):
+                falhas.append(f"  - [{round(au['score'] * 100):>3}] {au.get('title')}"
+                              + (f" — {au['displayValue']}" if au.get("displayValue") else ""))
+        if falhas:
+            linhas += ["", f"## {cat.get('title')}: audits abaixo de 90"] + falhas[:12]
+    avisos = lhr.get("runWarnings") or []
+    if avisos:
+        linhas += ["", "## Avisos do Lighthouse"] + [f"  - {w}" for w in avisos]
+    linhas += ["", f"Relatório completo: {html_file.name} (anexo) · JSON: {json_file.name}"]
+
+    resumo = base.with_name(base.name + ".txt")
+    resumo.write_text("\n".join(linhas), encoding="utf-8")
+    anexar(run_dir, a.caso, [resumo, html_file])
+    print("\n".join(linhas))
+    print(f"\n[ok] evidência: {resumo}\n[ok] evidência: {html_file}")
+
+
 # ---------------------------------------------------------------- relatório
 
 def _esc(v) -> str:
@@ -624,6 +716,16 @@ def main() -> None:
     sp.add_argument("--video", action="store_true")
     nav_args(sp)
     sp.set_defaults(fn=cmd_fluxo)
+
+    sp = sub.add_parser("lighthouse", help="auditoria Lighthouse (performance, SEO, acessibilidade, boas práticas)")
+    sp.add_argument("run_dir")
+    sp.add_argument("url")
+    sp.add_argument("--caso")
+    sp.add_argument("--nome")
+    sp.add_argument("--desktop", action="store_true", help="preset desktop (padrão: mobile)")
+    sp.add_argument("--categorias", default="performance,seo,accessibility,best-practices")
+    sp.add_argument("--timeout", type=int, default=240, help="segundos")
+    sp.set_defaults(fn=cmd_lighthouse)
 
     sp = sub.add_parser("relatorio", help="gera relatorio.html + relatorio.pdf")
     sp.add_argument("run_dir")
