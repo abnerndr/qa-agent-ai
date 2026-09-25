@@ -81,7 +81,11 @@ Pasta da execução: `${QA_REPORTS_DIR:-$HOME/qa-relatorios}/<projeto>-<pr-ou-ta
      `$QA print <run_dir> <url> --caso CT02 [--mobile] [--no-js] [--full-page] [--selector 'nav[aria-label]'] [--nome desc]`
    - **Fluxo com cliques** (sai com código 1 se uma ação falhar, mas grava print da falha e log):
      `$QA fluxo <run_dir> '<json de ações>' --caso CT03 [--video] [--mobile]`
-   - **Quando gravar vídeo (`--video`):** só quando a funcionalidade testada é uma interação cujo comportamento só se prova em movimento. Exemplos: preenchimento de formulário, clique em botão que muda estado (abrir modal, adicionar item, enviar, validação de campo), drag, animação ou transição que faz parte do critério. Navegação por link, status HTTP, canonical, conteúdo de página e visual estático se provam com print, log ou resposta HTTP, sem vídeo. Na dúvida, prefira print antes e depois da ação.
+   - **Quando gravar vídeo (`--video`):** só quando a funcionalidade testada é uma interação cujo comportamento só se prova em movimento. Exemplos: preenchimento de formulário, clique em botão que muda estado (abrir modal, adicionar item, enviar, validação de campo), drag, animação ou transição que faz parte do critério. Clicar num controle e ver o resultado (ex.: entrar na listagem e clicar na paginação) também vale vídeo. Status HTTP, canonical, conteúdo de página e visual estático se provam com print, log ou resposta HTTP, sem vídeo.
+     - **Só grave se a interação existe naquela página.** Antes de gravar, confirme sem vídeo (HTTP ou `print`) que o elemento está lá. Página onde a funcionalidade não aparece (ex.: listagem com uma página só, sem paginação) vira print, nunca vídeo.
+     - Tentativas exploratórias (descobrir seletor, achar um dado de teste com mais de uma página) rodam sem `--video`.
+     - Na dúvida, prefira print antes e depois da ação.
+   - **Vários fluxos no mesmo caso** (ex.: uma seção por fluxo): sempre passe `--nome` diferente em cada um. Prints, evals e falhas saem prefixados com esse nome (`CT03-autor-p2.png`).
      Ações: `goto`, `click`, `fill`, `press`, `wait_url`, `wait_selector`, `wait_ms`, `scroll`, `print`, `print_full`, `print_el`, `eval`, `assert_url`. Veja o docstring de `cmd_fluxo`.
    - **Evidência de outra fonte** (saída de comando, arquivo enviado pelo dev): salve em `<run_dir>/evidencias/` e anexe com `$QA caso <run_dir> CT04 --evidencia evidencias/arquivo.txt`.
 3. **Registrar o status logo depois de cada caso**, com o que foi observado de fato:

@@ -269,8 +269,12 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
         page = ctx.new_page()
         page.set_default_timeout(a.timeout * 1000)
 
+        def rotulo(nome: str) -> str:
+            # prefixa com --nome: fluxos do mesmo caso (ex.: uma seção por fluxo) não se misturam
+            return f"{a.nome}-{nome}" if a.nome else nome
+
         def shot(nome: str, **kw) -> None:
-            arq = proximo_arquivo(run_dir, a.caso, nome, ".png")
+            arq = proximo_arquivo(run_dir, a.caso, rotulo(nome), ".png")
             page.screenshot(path=str(arq), **kw)
             arquivos.append(arq)
 
@@ -317,12 +321,12 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
                 elif tipo == "print_full":
                     shot(valor, full_page=True)
                 elif tipo == "print_el":
-                    arq = proximo_arquivo(run_dir, a.caso, valor[1], ".png")
+                    arq = proximo_arquivo(run_dir, a.caso, rotulo(valor[1]), ".png")
                     page.locator(valor[0]).first.screenshot(path=str(arq))
                     arquivos.append(arq)
                 elif tipo == "eval":
                     resultado = page.evaluate(valor[0])
-                    arq = proximo_arquivo(run_dir, a.caso, valor[1], ".txt")
+                    arq = proximo_arquivo(run_dir, a.caso, rotulo(valor[1]), ".txt")
                     arq.write_text(
                         f"// {page.url}\n// {valor[0]}\n"
                         + json.dumps(resultado, ensure_ascii=False, indent=2),
