@@ -79,8 +79,9 @@ Pasta da execução: `${QA_REPORTS_DIR:-$HOME/qa-relatorios}/<projeto>-<pr-ou-ta
      `$QA http <run_dir> <url> --caso CT01 [--grep '<regex>'] [--header 'Host: x'] [--follow] [--salvar-body]`
    - **Print**:
      `$QA print <run_dir> <url> --caso CT02 [--mobile] [--no-js] [--full-page] [--selector 'nav[aria-label]'] [--nome desc]`
-   - **Fluxo com cliques e vídeo** (sai com código 1 se uma ação falhar, mas grava print da falha, log e vídeo):
-     `$QA fluxo <run_dir> '<json de ações>' --caso CT03 --video [--mobile]`
+   - **Fluxo com cliques** (sai com código 1 se uma ação falhar, mas grava print da falha e log):
+     `$QA fluxo <run_dir> '<json de ações>' --caso CT03 [--video] [--mobile]`
+   - **Quando gravar vídeo (`--video`):** só quando a funcionalidade testada é uma interação cujo comportamento só se prova em movimento. Exemplos: preenchimento de formulário, clique em botão que muda estado (abrir modal, adicionar item, enviar, validação de campo), drag, animação ou transição que faz parte do critério. Navegação por link, status HTTP, canonical, conteúdo de página e visual estático se provam com print, log ou resposta HTTP, sem vídeo. Na dúvida, prefira print antes e depois da ação.
      Ações: `goto`, `click`, `fill`, `press`, `wait_url`, `wait_selector`, `wait_ms`, `scroll`, `print`, `print_full`, `print_el`, `eval`, `assert_url`. Veja o docstring de `cmd_fluxo`.
    - **Evidência de outra fonte** (saída de comando, arquivo enviado pelo dev): salve em `<run_dir>/evidencias/` e anexe com `$QA caso <run_dir> CT04 --evidencia evidencias/arquivo.txt`.
 3. **Registrar o status logo depois de cada caso**, com o que foi observado de fato:
