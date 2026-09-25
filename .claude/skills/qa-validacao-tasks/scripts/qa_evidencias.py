@@ -398,22 +398,52 @@ def cmd_lighthouse(a: argparse.Namespace) -> None:
 
     preset = "desktop" if a.desktop else "mobile"
     base = proximo_arquivo(run_dir, a.caso, f"{a.nome or 'lighthouse'}-{preset}", "")
+
+    # O Chrome é iniciado aqui, e não pelo chrome-launcher do Lighthouse: no WSL o
+    # chrome-launcher cria pastas lighthouse.XXXX no AppData\Local do Windows.
+    # Perfil temporário em /tmp (Linux) e sem DISPLAY/WAYLAND_DISPLAY: nada toca o
+    # Windows e nenhuma janela abre via WSLg, mesmo que o --headless seja ignorado.
+    import os
+    import socket
+    import tempfile
+    import time
+    import urllib.request as _ur
+
+    env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+    with socket.socket() as sk:
+        sk.bind(("127.0.0.1", 0))
+        porta = sk.getsockname()[1]
+    perfil = tempfile.mkdtemp(prefix="qa-lighthouse-")
+    chrome_proc = subprocess.Popen(
+        [chrome, "--headless=new", f"--remote-debugging-port={porta}", f"--user-data-dir={perfil}",
+         "--no-sandbox", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check",
+         "about:blank"],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
     cmd = [
-        "npx", "-y", f"lighthouse@{LH_VERSAO}", a.url, "--quiet",
+        "npx", "-y", f"lighthouse@{LH_VERSAO}", a.url, "--quiet", f"--port={porta}",
         "--output=json", "--output=html", f"--output-path={base}",
-        "--chrome-flags=--headless=new --no-sandbox --disable-dev-shm-usage",
         f"--only-categories={a.categorias}",
     ]
     if a.desktop:
         cmd.append("--preset=desktop")
-    # sem DISPLAY/WAYLAND_DISPLAY: no WSL (WSLg) o Chrome nunca abre janela no Windows,
-    # mesmo que o --headless seja ignorado. Roda só dentro da execução dos testes.
-    env = {k: v for k, v in __import__("os").environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
-    env["CHROME_PATH"] = chrome
-    proc = subprocess.run(
-        cmd, env=env,
-        capture_output=True, text=True, timeout=a.timeout,
-    )
+    try:
+        for _ in range(60):  # até ~15 s para o DevTools responder
+            try:
+                _ur.urlopen(f"http://127.0.0.1:{porta}/json/version", timeout=1).read()
+                break
+            except OSError:
+                time.sleep(0.25)
+        else:
+            sys.exit("[erro] Chromium não abriu a porta de depuração")
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=a.timeout)
+    finally:
+        chrome_proc.terminate()
+        try:
+            chrome_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            chrome_proc.kill()
+        shutil.rmtree(perfil, ignore_errors=True)
     json_file = base.with_name(base.name + ".report.json")
     html_file = base.with_name(base.name + ".report.html")
     if proc.returncode != 0 or not json_file.exists():

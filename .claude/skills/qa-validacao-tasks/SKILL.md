@@ -87,7 +87,7 @@ Pasta da execução: `${QA_REPORTS_DIR:-$HOME/qa-relatorios}/<projeto>-<pr-ou-ta
      - Na dúvida, prefira print antes e depois da ação.
    - **Vários fluxos no mesmo caso** (ex.: uma seção por fluxo): sempre passe `--nome` diferente em cada um. Prints, evals e falhas saem prefixados com esse nome (`CT03-autor-p2.png`).
      Ações: `goto`, `click`, `fill`, `press`, `wait_url`, `wait_selector`, `wait_ms`, `scroll`, `print`, `print_full`, `print_el`, `eval`, `assert_url`. Veja o docstring de `cmd_fluxo`.
-   - **Lighthouse** (performance, SEO, acessibilidade, boas práticas). Roda dentro da execução, headless, com o Chromium do Playwright e sem acesso ao display, então nunca abre janela no Windows/WSLg. Precisa de Node/npx:
+   - **Lighthouse** (performance, SEO, acessibilidade, boas práticas). Roda dentro da execução: o script sobe o Chromium do Playwright headless, com perfil temporário em `/tmp` e sem acesso ao display, e conecta o Lighthouse via `--port`. Nunca abre janela no Windows/WSLg nem cria pastas `lighthouse.*` no `AppData` do Windows (o `chrome-launcher` do Lighthouse faria isso no WSL). Não rode `npx lighthouse` direto. Precisa de Node/npx:
      `$QA lighthouse <run_dir> <url> --caso CT18 --nome secao-p1 [--desktop] [--categorias seo,performance]`
      Salva resumo `.txt` (scores, métricas, audits abaixo de 90) e o relatório `.html` completo como anexo. Regras:
      - Em páginas de listagem/SEO, rode na página base e numa página interna e compare as duas: regressão é diferença entre elas, não nota absoluta.
