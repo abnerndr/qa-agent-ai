@@ -4,7 +4,7 @@ Este arquivo existe para que **qualquer agente novo** (Claude Code em outra sess
 
 Ordem de leitura: `README.md` → `CLAUDE.md` (carregado automaticamente pelo Claude Code) → este arquivo → `docs/work-os-reference.md` se precisar do método completo.
 
-**Última atualização:** 2026-10-09, gerada pela skill `/handoff` (`.claude/skills/handoff/`), cobrindo até o commit `7562344` mais a sessão que criou a própria skill.
+**Última atualização:** 2026-10-09, gerada pela skill `/handoff` (`.claude/skills/handoff/`), cobrindo até o commit `ac85a87`. Primeira execução via comando `/handoff`.
 
 ## O que é este projeto
 
@@ -46,7 +46,7 @@ Work OS pessoal do Abner (dev full stack no time Mundo ZeroKM / PYXYS) que suste
 | 2026-09-25 | `522546a` `25abcdf` | Auditoria Lighthouse na execução; correção de pastas no AppData (WSL) |
 | 2026-09-25 | `f1dc1f1` | README reescrito apresentando o agente |
 | 2026-10-09 | `7562344` | Modo automático: `buscar_prd.sh`, `registro_lista_slack.py`, ADR-003 |
-| 2026-10-09 | *(sessão do handoff)* | Skill `/handoff`, memória `user`, handoff/session-log/decision-log atualizados |
+| 2026-10-09 | `ac85a87` | Skill `/handoff`, memória `user`, handoff/session-log/decision-log atualizados |
 
 Confira `git log --oneline` para commits mais novos que este arquivo.
 

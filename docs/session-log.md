@@ -8,3 +8,6 @@ Entradas não registradas na época; reconstruídas do `git log` e dos ADRs. PRD
 
 ## 2026-10-09 — Skill /handoff e preparação para o Demoday
 Validado o checklist do Demoday (Skill + CLAUDE.md + memória por tipo + Git). Criada a memória `user` (`perfil-abner`), completando os 4 tipos. Instalada a skill `handoff` em `.claude/skills/handoff/` e rodada pela primeira vez: `handoff.md` reescrito (estava parado em 09-11). Registrado ADR-003 no `decision-log.md`; tasks 4.2 e 5.4 marcadas com base no ADR-002. Em aberto: PRD/tasks ainda descrevem só o V1; métricas `[NEED]` e piloto com o time.
+
+## 2026-10-09 — Primeira execução de /handoff
+Skill `handoff` invocada pelo comando `/handoff` (antes o procedimento tinha sido seguido manualmente). Sem commits novos além de `ac85a87`; working tree limpo (a mudança solta no `.gitignore` foi revertida). Handoff atualizado só nas referências de commit. Nenhuma decisão nova; pendências continuam as mesmas (PRD/tasks só com V1, métricas `[NEED]`, piloto com o time).
