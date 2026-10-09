@@ -2,6 +2,7 @@
 
 Índice das memórias acumuladas neste projeto. Cada linha aponta para um arquivo em `.claude/memory/` com frontmatter `type: user | feedback | project | reference`.
 
+- [Perfil do Abner](perfil-abner.md) — dev full stack Mundo ZeroKM, dono do agente de QA; pt-BR, curto, Playwright para poupar tokens
 - [Relatório PDF da execução de QA](relatorio-pdf-execucao-qa.md) — execução guiada sempre fecha com PDF de plano + evidências, inclusive falhas
 - [Instalação WSL + Windows](instalacao-wsl-windows.md) — skill instalada nos dois lados; Windows não alcança cdn.playwright.dev
 - [Staging Mundo ZeroKM e Assistente](mundozerokm-staging-assistente.md) — Basic Auth no staging; endpoint /chat do assistente

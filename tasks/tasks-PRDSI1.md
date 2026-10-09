@@ -44,7 +44,7 @@
 
 - [ ] 4.0 Resolver as decisões técnicas em aberto da Seção 8 do PRD (marcadas `[NEED]`, Owner: Abner)
   - [ ] 4.1 Decidir onde o V2 vai rodar (Work OS atual / app Electron / site) e registrar o racional
-  - [ ] 4.2 Decidir a ferramenta de captura de evidência (nativa do Playwright ou outra)
+  - [x] 4.2 Decidir a ferramenta de captura de evidência (nativa do Playwright ou outra) — Playwright via script Python próprio (ADR-002)
   - [ ] 4.3 Quantificar o esforço atual gasto validando tasks manualmente (pode reaproveitar os dados da task 3.1)
   - [ ] 4.4 Definir quantos devs/QA vão usar o sistema, para dimensionar o rollout
   - [ ] 4.5 Definir onde o histórico de evidências (prints/vídeos) vai ficar armazenado
@@ -54,5 +54,5 @@
   - [ ] 5.1 Revisar, com os dados de 1.0–4.0, se o critério de avanço do PRD foi atingido (time confirmar que o plano sozinho não basta)
   - [ ] 5.2 Atualizar `docs/problem-brief.md` e `docs/option-matrix.md` com o resultado desta fase
   - [ ] 5.3 Registrar uma linha em `docs/decision-log.md` com a decisão tomada (avançar para V2, ou não, e por quê)
-  - [ ] 5.4 Se a decisão for avançar: criar `.claude/adr/adr-002-*.md` formalizando escopo, tooling e onde o V2 roda, seguindo `docs/runbooks/como-registrar-uma-decisao.md`, e registrar no `.claude/memory/adr-index.md`
+  - [x] 5.4 Se a decisão for avançar: criar `.claude/adr/adr-002-*.md` formalizando escopo, tooling e onde o V2 roda, seguindo `docs/runbooks/como-registrar-uma-decisao.md`, e registrar no `.claude/memory/adr-index.md` — feito antecipadamente no ADR-002 (2026-09-25), após o uso real na PR #516
   - [ ] 5.5 Se a decisão for não avançar: registrar o motivo em `docs/decision-log.md` e manter o V1 como está
