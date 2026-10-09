@@ -132,15 +132,19 @@ def cmd_caso(a: argparse.Namespace) -> None:
     run_dir = Path(a.run_dir)
     run = load_run(run_dir)
     caso = get_caso(run, a.id)
-    for campo in ("criterio", "titulo", "tipo", "passos", "esperado", "observado", "status"):
+    for campo in ("criterio", "titulo", "tipo", "passos", "esperado", "observado", "resumo", "status"):
         valor = getattr(a, campo)
         if valor is not None:
             caso[campo] = valor
-    for arq in a.evidencia or []:
+    def rel(arq: str) -> str:
         p = Path(arq)
-        rel = str(p.relative_to(run_dir)) if p.is_absolute() else arq
-        if rel not in caso.setdefault("evidencias", []):
-            caso["evidencias"].append(rel)
+        return str(p.relative_to(run_dir)) if p.is_absolute() else arq
+    for arq in (a.evidencia or []) + (a.destaque or []):
+        if rel(arq) not in caso.setdefault("evidencias", []):
+            caso["evidencias"].append(rel(arq))
+    if a.destaque:
+        # destaque = evidência mostrada no PDF; o resto fica só listado (ou no --completo)
+        caso["destaques"] = [rel(arq) for arq in a.destaque]
     save_run(run_dir, run)
     print(f"[ok] {a.id}: {caso.get('status')}")
 
@@ -255,7 +259,10 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
     goto:URL · click:SELETOR · fill:[SELETOR, TEXTO] · press:[SELETOR, TECLA]
     wait_url:GLOB · wait_selector:SELETOR · wait_ms:N · scroll:"bottom"|SELETOR · wheel:PIXELS
     print:NOME (screenshot da viewport) · print_full:NOME · print_el:[SELETOR, NOME]
-    eval:[EXPRESSAO_JS, NOME] (salva o resultado em .txt) · assert_url:REGEX
+    eval:EXPRESSAO_JS ou [EXPRESSAO_JS, NOME] (resultado vai para o log, não gera arquivo)
+    assert_url:REGEX · assert_visible:SELETOR · assert_hidden:SELETOR
+    assert_text:[SELETOR, REGEX] · assert_count:[SELETOR, N] · assert_eval:[EXPRESSAO_JS, VALOR_ESPERADO]
+    Cada assert grava "✓ ok"/"✗" no log; o primeiro que falhar encerra o fluxo com print da falha.
     """
     run_dir = Path(a.run_dir)
     acoes = json.loads(Path(a.acoes).read_text(encoding="utf-8")) if Path(a.acoes).exists() else json.loads(a.acoes)
@@ -326,19 +333,38 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
                     page.locator(valor[0]).first.screenshot(path=str(arq))
                     arquivos.append(arq)
                 elif tipo == "eval":
-                    resultado = page.evaluate(valor[0])
-                    arq = proximo_arquivo(run_dir, a.caso, rotulo(valor[1]), ".txt")
-                    arq.write_text(
-                        f"// {page.url}\n// {valor[0]}\n"
-                        + json.dumps(resultado, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                    arquivos.append(arq)
-                    log.append(f"    → {json.dumps(resultado, ensure_ascii=False)[:300]}")
+                    expr, nome = (valor, None) if isinstance(valor, str) else (valor[0], valor[1])
+                    resultado = page.evaluate(expr)
+                    texto = json.dumps(resultado, ensure_ascii=False, indent=2)
+                    log.append(f"    → {nome + ' = ' if nome else ''}{texto[:2000]}")
                 elif tipo == "assert_url":
                     if not re.search(valor, page.url):
                         raise AssertionError(f"URL {page.url!r} não casa com /{valor}/")
-                    log.append(f"    → ok {page.url}")
+                    log.append(f"    ✓ ok {page.url}")
+                elif tipo == "assert_visible":
+                    page.locator(valor).first.wait_for(state="visible")
+                    log.append("    ✓ ok visível")
+                elif tipo == "assert_hidden":
+                    if page.locator(valor).first.is_visible():
+                        raise AssertionError(f"{valor!r} está visível")
+                    log.append("    ✓ ok não visível")
+                elif tipo == "assert_text":
+                    loc = page.locator(valor[0]).first
+                    loc.wait_for(state="attached")
+                    txt = loc.inner_text()
+                    if not re.search(valor[1], txt):
+                        raise AssertionError(f"texto {txt[:200]!r} não casa com /{valor[1]}/")
+                    log.append(f"    ✓ ok {txt[:120]!r}")
+                elif tipo == "assert_count":
+                    n = page.locator(valor[0]).count()
+                    if n != int(valor[1]):
+                        raise AssertionError(f"{valor[0]!r}: {n} elementos, esperado {valor[1]}")
+                    log.append(f"    ✓ ok {n} elementos")
+                elif tipo == "assert_eval":
+                    resultado = page.evaluate(valor[0])
+                    if resultado != valor[1]:
+                        raise AssertionError(f"resultado {resultado!r}, esperado {valor[1]!r}")
+                    log.append(f"    ✓ ok {json.dumps(resultado, ensure_ascii=False)[:120]}")
                 else:
                     raise ValueError(f"ação desconhecida: {tipo}")
         except Exception as e:  # falha também é evidência
@@ -389,7 +415,8 @@ def cmd_lighthouse(a: argparse.Namespace) -> None:
     import subprocess
 
     run_dir = Path(a.run_dir)
-    if not shutil.which("npx"):
+    npx = shutil.which("npx")  # caminho completo: no Windows é npx.cmd, que o subprocess não acha sozinho
+    if not npx:
         sys.exit("[erro] Lighthouse precisa de Node/npx no PATH")
     with _playwright()() as p:
         chrome = p.chromium.executable_path
@@ -421,7 +448,7 @@ def cmd_lighthouse(a: argparse.Namespace) -> None:
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     cmd = [
-        "npx", "-y", f"lighthouse@{LH_VERSAO}", a.url, "--quiet", f"--port={porta}",
+        npx, "-y", f"lighthouse@{LH_VERSAO}", a.url, "--quiet", f"--port={porta}",
         "--output=json", "--output=html", f"--output-path={base}",
         f"--only-categories={a.categorias}",
     ]
@@ -559,7 +586,7 @@ th { background: #f2f4f7; }
 .campo b { color: #475467; }
 .ev { margin-top: 8px; page-break-inside: avoid; }
 .ev-nome { font-size: 8.5pt; color: #475467; margin-bottom: 3px; font-family: ui-monospace, Menlo, monospace; }
-.ev img { max-width: 100%; max-height: 120mm; border: 1px solid #d0d5dd; }
+.ev img { max-width: 100%; max-height: 95mm; border: 1px solid #d0d5dd; }
 pre { background: #0b1220; color: #e4e7ec; padding: 8px; border-radius: 4px; font-size: 7.8pt; white-space: pre-wrap; word-break: break-all; margin: 0; }
 .cards { display: flex; gap: 8px; margin: 8px 0 4px; }
 .card { flex: 1; border: 1px solid #d0d5dd; border-radius: 6px; padding: 6px 8px; }
@@ -568,7 +595,57 @@ pre { background: #0b1220; color: #e4e7ec; padding: 8px; border-radius: 4px; fon
 """
 
 
-def montar_html(run_dir: Path, run: dict) -> str:
+IMAGENS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+VIDEOS = (".webm", ".mp4", ".mov")
+
+
+def _resumo(c: dict) -> str:
+    """Uma linha para a tabela: --resumo, ou a primeira frase do observado."""
+    if c.get("resumo"):
+        return c["resumo"]
+    obs = (c.get("observado") or "").strip()
+    frase = re.split(r"(?<=[.!?])\s|\n", obs, maxsplit=1)[0]
+    return frase if len(frase) <= 160 else frase[:157] + "…"
+
+
+def _principais(c: dict) -> list[str]:
+    """Evidências exibidas no PDF enxuto: destaques, ou a primeira imagem, ou o primeiro texto."""
+    if c.get("destaques"):
+        return c["destaques"]
+    evid = c.get("evidencias") or []
+    for exts in (IMAGENS, (".txt", ".log", ".json", ".md")):
+        achou = [e for e in evid if Path(e).suffix.lower() in exts and "-log" not in Path(e).stem]
+        if achou:
+            return achou[:1]
+    return evid[:1] if evid and Path(evid[0]).suffix.lower() not in VIDEOS else []
+
+
+def _bloco_caso(run_dir: Path, c: dict, completo: bool) -> str:
+    partes = ["<div class='caso'>"]
+    partes.append(
+        f"<div class='caso-head'><h3>{_esc(c.get('id'))} — {_esc(c.get('titulo'))}</h3>{_badge(c.get('status', 'pendente'))}</div>"
+    )
+    campos = (("Critério", "criterio"), ("Tipo", "tipo"), ("Passos", "passos")) if completo else ()
+    for rotulo, campo in campos + (("Esperado", "esperado"), ("Observado", "observado")):
+        if c.get(campo):
+            partes.append(f"<div class='campo'><b>{rotulo}:</b> {_multiline(c.get(campo))}</div>")
+    evid = c.get("evidencias") or []
+    mostrar = evid if completo else _principais(c)
+    partes += [_evidencia_html(run_dir, rel) for rel in mostrar]
+    resto = [e for e in evid if e not in mostrar]
+    if not evid:
+        partes.append("<div class='campo'><b>Evidências:</b> nenhuma capturada</div>")
+    elif resto:
+        videos = [e for e in resto if Path(e).suffix.lower() in VIDEOS]
+        txt = f"+{len(resto)} arquivo(s) em <code>evidencias/</code>"
+        if videos:
+            txt += " — vídeo: " + ", ".join(f"<code>{_esc(Path(v).name)}</code>" for v in videos)
+        partes.append(f"<div class='ev-nome'>{txt}</div>")
+    partes.append("</div>")
+    return "".join(partes)
+
+
+def montar_html(run_dir: Path, run: dict, completo: bool = False) -> str:
     casos = run.get("casos", [])
     criterios = run.get("criterios", [])
     contagem = {s: sum(1 for c in casos if c.get("status", "pendente") == s) for s in STATUS}
@@ -578,16 +655,24 @@ def montar_html(run_dir: Path, run: dict) -> str:
     meta = [
         ("Projeto", run.get("projeto")), ("PR", run.get("pr")), ("Branch", run.get("branch")),
         ("Ambiente", run.get("ambiente")), ("Responsável", run.get("responsavel")),
-        ("Data", run.get("data")), ("Gerado em", dt.datetime.now().strftime("%Y-%m-%d %H:%M")),
+        ("Data", run.get("data")),
     ]
+    escopo = run.get("escopo") or {}
+    if escopo.get("tipo") == "funcionalidade":
+        meta.insert(4, ("Escopo", f"Funcionalidade: {escopo.get('funcionalidade') or '—'} (o resto da página não foi validado)"))
+        if escopo.get("como_testar"):
+            meta.insert(5, ("Como testar", escopo["como_testar"]))
+    else:
+        meta.insert(4, ("Escopo", "Task completa"))
+    fontes = run.get("fontes") or {}
+    meta += [("Task (Slack)", fontes.get("slack")), ("PRD", fontes.get("prd"))]
     partes.append("<div class='meta'>" + "".join(f"<b>{k}</b><span>{_esc(v)}</span>" for k, v in meta if v) + "</div>")
     partes.append(
-        "<div class='aviso'>Evidências capturadas pelo agente de QA contra o ambiente indicado. "
-        "Este relatório <b>não é veredito de aprovação</b>: casos divergentes e pendentes estão incluídos "
-        "com a evidência do que foi observado. A decisão de aprovar a task é do dev/PM.</div>"
+        "<div class='aviso'>Evidências capturadas pelo agente de QA. <b>Não é veredito de aprovação</b>: "
+        "a decisão de aprovar a task é do dev/PM.</div>"
     )
 
-    # 1. Resumo
+    # 1. Resumo: contagem + critérios
     partes.append("<h2>1. Resumo</h2><div class='cards'>")
     for s in STATUS:
         partes.append(f"<div class='card'><div class='n' style='color:{STATUS_COR[s]}'>{contagem[s]}</div>{s}</div>")
@@ -603,8 +688,14 @@ def montar_html(run_dir: Path, run: dict) -> str:
             )
         partes.append("</table>")
 
-    # 2. Divergências e pontos em aberto
+    # 2. Achados: o que o dev precisa ler primeiro
     sec = 2
+    achados = [c for c in casos if c.get("status", "pendente") in ("divergente", "pendente")]
+    if achados:
+        partes.append(f"<h2>{sec}. Achados (divergentes e pendentes)</h2>")
+        partes += [_bloco_caso(run_dir, c, completo) for c in achados]
+        sec += 1
+
     if run.get("divergencias"):
         partes.append(f"<h2>{sec}. Divergências entre entrega e task</h2>")
         partes.append("<table><tr><th>#</th><th>Divergência</th><th>Decisão</th></tr>")
@@ -621,51 +712,69 @@ def montar_html(run_dir: Path, run: dict) -> str:
         partes.append("</ul>")
         sec += 1
 
-    # Tabela de casos
+    # Tabela de casos, uma linha cada
     partes.append(f"<h2>{sec}. Casos de teste</h2>")
-    partes.append("<table><tr><th>Caso</th><th>Critério</th><th>Tipo</th><th>Título</th><th>Status</th></tr>")
+    partes.append("<table><tr><th>Caso</th><th>Crit.</th><th>Tipo</th><th>Título</th><th>Resultado</th><th>Status</th></tr>")
     for c in casos:
         partes.append(
             f"<tr><td><b>{_esc(c.get('id'))}</b></td><td>{_esc(c.get('criterio'))}</td><td>{_esc(c.get('tipo'))}</td>"
-            f"<td>{_esc(c.get('titulo'))}</td><td>{_badge(c.get('status', 'pendente'))}</td></tr>"
+            f"<td>{_esc(c.get('titulo'))}</td><td>{_esc(_resumo(c))}</td><td>{_badge(c.get('status', 'pendente'))}</td></tr>"
         )
     partes.append("</table>")
     sec += 1
 
-    # Detalhe + evidências
-    partes.append(f"<h2>{sec}. Detalhe e evidências</h2>")
-    for c in casos:
-        partes.append("<div class='caso'>")
-        partes.append(
-            f"<div class='caso-head'><h3>{_esc(c.get('id'))} — {_esc(c.get('titulo'))}</h3>{_badge(c.get('status', 'pendente'))}</div>"
-        )
-        for rotulo, campo in (("Critério", "criterio"), ("Tipo", "tipo"), ("Passos", "passos"), ("Esperado", "esperado"), ("Observado", "observado")):
-            if c.get(campo):
-                partes.append(f"<div class='campo'><b>{rotulo}:</b> {_multiline(c.get(campo))}</div>")
-        evid = c.get("evidencias") or []
-        if not evid:
-            partes.append("<div class='campo'><b>Evidências:</b> nenhuma capturada</div>")
-        partes += [_evidencia_html(run_dir, rel) for rel in evid]
-        partes.append("</div>")
-
-    if run.get("task"):
+    # Evidências dos demais casos (os achados já apareceram acima)
+    resto = [c for c in casos if c not in achados]
+    if resto:
+        partes.append(f"<h2>{sec}. Evidências dos casos {'' if completo else 'confirmados/pulados'}</h2>")
+        partes += [_bloco_caso(run_dir, c, completo) for c in resto]
         sec += 1
+
+    if completo and run.get("task"):
         partes.append(f"<h2>{sec}. Texto original da task</h2><div class='task'>{_esc(run['task'])}</div>")
 
     partes.append("</body></html>")
     return "".join(partes)
 
 
+def _avisos_qualidade(run: dict) -> list[str]:
+    avisos = []
+    for c in run.get("casos", []):
+        cid = c.get("id")
+        if not c.get("resumo"):
+            avisos.append(f"{cid}: sem --resumo (a tabela usa a 1ª frase do observado)")
+        if c.get("status") in ("divergente", "confirmado") and not c.get("evidencias"):
+            avisos.append(f"{cid}: {c['status']} sem evidência")
+        if c.get("status") != "pulado" and not c.get("observado"):
+            avisos.append(f"{cid}: sem --observado")
+        if len(c.get("evidencias") or []) > 8:
+            avisos.append(f"{cid}: {len(c['evidencias'])} evidências — revise o orçamento do caso")
+        if len(c.get("destaques") or []) > 2:
+            avisos.append(f"{cid}: {len(c['destaques'])} destaques (máx. recomendado: 2)")
+    return avisos
+
+
 def cmd_relatorio(a: argparse.Namespace) -> None:
     run_dir = Path(a.run_dir).resolve()
     run = load_run(run_dir)
-    html_file = run_dir / "relatorio.html"
-    pdf_file = run_dir / (a.saida or "relatorio.pdf")
-    html_file.write_text(montar_html(run_dir, run), encoding="utf-8")
+    pdf_file = run_dir / (a.saida or ("relatorio-completo.pdf" if a.completo else "relatorio.pdf"))
+    html_file = pdf_file.with_suffix(".html")
+    for aviso in _avisos_qualidade(run):
+        print(f"[aviso] {aviso}")
+    html_file.write_text(montar_html(run_dir, run, a.completo), encoding="utf-8")
     with _playwright()() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
         page.goto(html_file.as_uri(), wait_until="load")
+        # PNG em resolução cheia infla o PDF: reamostra para JPEG de no máx. 1200px de largura
+        page.evaluate("""() => { for (const img of document.images) {
+            const w = Math.min(img.naturalWidth, 1200), h = Math.round(img.naturalHeight * w / img.naturalWidth);
+            if (!w || !h) continue;
+            const c = document.createElement('canvas'); c.width = w; c.height = h;
+            const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+            img.src = c.toDataURL('image/jpeg', 0.72);
+        } }""")
+        page.wait_for_load_state("load")
         page.pdf(
             path=str(pdf_file),
             format="A4",
@@ -686,6 +795,9 @@ def cmd_relatorio(a: argparse.Namespace) -> None:
 # ---------------------------------------------------------------- CLI
 
 def main() -> None:
+    for stream in (sys.stdout, sys.stderr):  # console do Windows (cp1252) quebra com acentos e "→"
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -708,8 +820,10 @@ def main() -> None:
     sp.add_argument("id")
     for campo in ("criterio", "titulo", "tipo", "passos", "esperado", "observado"):
         sp.add_argument(f"--{campo}")
+    sp.add_argument("--resumo", help="uma linha: esperado × observado (vai para a tabela do PDF)")
     sp.add_argument("--status", choices=STATUS)
     sp.add_argument("--evidencia", action="append", help="caminho relativo ao run_dir (repetível)")
+    sp.add_argument("--destaque", action="append", help="evidência exibida no PDF (repetível; substitui as anteriores)")
     sp.set_defaults(fn=cmd_caso)
 
     sp = sub.add_parser("http", help="requisição HTTP sem seguir redirect")
@@ -760,6 +874,8 @@ def main() -> None:
     sp = sub.add_parser("relatorio", help="gera relatorio.html + relatorio.pdf")
     sp.add_argument("run_dir")
     sp.add_argument("--saida", help="nome do PDF (padrão relatorio.pdf)")
+    sp.add_argument("--completo", action="store_true",
+                    help="todas as evidências inline + passos + texto da task (padrão: enxuto, só destaques)")
     sp.set_defaults(fn=cmd_relatorio)
 
     a = ap.parse_args()

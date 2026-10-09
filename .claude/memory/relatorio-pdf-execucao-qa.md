@@ -11,6 +11,7 @@ Ao final da execução guiada da skill `qa-validacao-tasks`, gerar um relatório
 
 **How to apply:**
 - Desde 2026-09-25 (ADR-002) quem executa e captura evidência é o agente, via `scripts/qa_evidencias.py` da skill. Continua sem veredito automático.
+- Formato e volume do PDF: ver [[relatorio-qa-enxuto]] (enxuto por padrão desde 2026-10-07).
 - Status por caso: confirmado / divergente / pendente / pulado. Sem veredito geral de "aprovado".
 - Incluir as divergências PR × task e os pontos em aberto levantados no plano.
 - Evidências e PDF em `${QA_REPORTS_DIR:-~/qa-relatorios}/<projeto>-<pr>/`. Para o Abner, usar `QA_REPORTS_DIR=/home/abner/www/abnerndr/qa-agent-ai/outputs/qa`.
