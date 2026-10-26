@@ -1,6 +1,6 @@
 ---
 name: qa-validacao-tasks
-description: Gera o plano de teste (Playwright para UI, requisições HTTP para API) que comprova se uma task de Next.js/Node.js atende aos critérios de aceite, mesmo quando esses critérios vêm soltos dentro de uma mensagem de task no Slack em vez de uma lista organizada. Depois de entregar o plano, executa os casos contra o ambiente indicado pelo dev, captura as evidências (prints, vídeos, respostas HTTP) e entrega um relatório PDF com o status de cada caso — inclusive os que falharam. Use esta skill sempre que o usuário colar uma task/ticket e pedir para validar, conferir critérios de aceite, montar um QA gate, gerar casos de teste ou evidências antes de aprovar uma entrega — mesmo que não diga "Playwright" ou "teste" explicitamente.
+description: Gera o plano de teste (Playwright para UI, requisições HTTP para API) que comprova se uma task de Next.js/Node.js atende aos critérios de aceite, mesmo quando esses critérios vêm soltos dentro de uma mensagem de task no Slack em vez de uma lista organizada. Depois de entregar o plano, executa os casos contra o ambiente indicado pelo dev, captura as evidências (prints, vídeos, respostas HTTP) e entrega um relatório PDF com o status de cada caso — inclusive os que falharam. Também roda testes autônomos (exploração sem task) que varrem a aplicação procurando erros de página, JavaScript, console, rede, imagem e layout. Use esta skill sempre que o usuário colar uma task/ticket e pedir para validar, conferir critérios de aceite, montar um QA gate, gerar casos de teste ou evidências antes de aprovar uma entrega, ou pedir para "procurar erros"/"varrer o site" — mesmo que não diga "Playwright" ou "teste" explicitamente.
 ---
 
 # QA de Validação de Tasks
@@ -13,6 +13,19 @@ Você atua como Engenheiro de QA/Automação sênior. Entregáveis, nesta ordem:
 
 Você **não declara veredito de aprovação**. O relatório mostra o que foi observado; quem aprova a task é o dev/PM.
 
+## Funciona com qualquer IA
+
+Esta skill segue o formato aberto de Agent Skills (`SKILL.md` + `scripts/`) e não depende de um agente específico. Onde o texto cita uma capacidade, use a equivalente da sua ferramenta:
+
+| Capacidade | Claude Code | Outras IAs (Codex, Gemini CLI, Cursor, Copilot, OpenCode…) |
+|---|---|---|
+| Perguntar ao dev com opções | `AskUserQuestion` | pergunta numerada no chat, uma rodada por vez |
+| Subagentes (execução em paralelo) | `Agent`/Task | o recurso de subagente da ferramenta; sem ele, rode em sequência |
+| Ler Slack | MCP do Slack | MCP do Slack configurado na ferramenta; sem MCP, use o modo manual |
+| Rodar comandos | Bash | terminal/shell da ferramenta |
+
+Todo o trabalho pesado (navegador, HTTP, Lighthouse, exploração, PDF) está em `scripts/qa_evidencias.py`, que é Python puro e roda igual em qualquer agente.
+
 ## Quando usar
 
 Acione este fluxo quando o usuário colar o texto de uma task (geralmente uma mensagem de Slack) e pedir para validar se ela está pronta, conferir critérios de aceite, montar casos de teste ou gerar evidências para uma feature em Next.js/Node.js.
@@ -23,14 +36,15 @@ O texto da task normalmente **não vem em lista organizada**. Chega como mensage
 
 ## Passo 0: modo de entrada
 
-Antes de qualquer outra coisa, pergunte (AskUserQuestion) como o dev quer passar a task. Pule a pergunta só se ele já tiver colado o texto da task (→ manual) ou um link do Slack: registro de lista ou mensagem (→ automático).
+Antes de qualquer outra coisa, pergunte como o dev quer passar a task. Pule a pergunta só se ele já tiver colado o texto da task (→ manual), um link do Slack: registro de lista ou mensagem (→ automático), ou pedido para "procurar erros"/"varrer" sem task (→ exploração autônoma).
 
 - **Manual** (padrão): o dev cola o texto da task e responde às perguntas de contexto. Siga para o **Processo**.
 - **Automático**: o dev cola o link da task no Slack, e você busca a task e o PRD sozinho.
+- **Exploração autônoma**: não há task. Você varre a aplicação procurando erros. Siga a seção **Exploração autônoma**.
 
   **Ao escolher o automático, explique antes de começar** (curto, em tópicos): o que você vai fazer (ler a task no Slack (registro da lista ou mensagem + thread), baixar o PRD citado, extrair os critérios e montar o plano), o que **não** vai fazer (não responde nem reage no Slack, não executa nada sem o ok dele) e os 2 pré-requisitos (Slack conectado ao Claude e SSH com acesso à org `pyxys-inteligencia-digital`). Em seguida, confira os dois pré-requisitos **antes** de pedir o link e guie o dev no que faltar:
 
-  1. **Conexão com o Slack.** Veja se há ferramentas de um MCP do Slack disponíveis na sessão (nomes com `slack`, ex.: leitura de lista, mensagem/thread). Se houver e responderem, diga "Slack conectado" e siga. Se não houver, ou se o servidor aparecer como "requer autenticação", **pare e guie passo a passo**, um passo por vez, esperando ele confirmar:
+  1. **Conexão com o Slack.** Veja se há ferramentas de um MCP do Slack disponíveis na sessão (nomes com `slack`, ex.: leitura de lista, mensagem/thread). Se houver e responderem, diga "Slack conectado" e siga. Se não houver, ou se o servidor aparecer como "requer autenticação", **pare e guie passo a passo**, um passo por vez, esperando ele confirmar. Os passos abaixo são do Claude; em outra IA, oriente a adicionar o MCP oficial do Slack na configuração de MCP dela (ex.: `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.cursor/mcp.json`) e reiniciar a sessão:
      1. Abrir https://claude.ai/settings/connectors (mesma conta logada no Claude Code).
      2. Procurar **Slack** na lista (ou "Procurar conectores"/"Browse connectors") e clicar em **Conectar**.
      3. Na tela do Slack, escolher o workspace da PYXYS/Mundo ZeroKM (canto superior direito) e clicar em **Permitir**. Se o Slack pedir aprovação de administrador, o dev precisa pedir ao admin do workspace: sem isso não tem como seguir.
@@ -64,6 +78,7 @@ O modo automático muda só a coleta. Os gates continuam: critério ambíguo vir
    Nas mesmas perguntas, inclua o **escopo do teste** (a não ser que o dev já tenha dito):
    - **Task completa** (padrão): todos os critérios de aceite, todas as páginas/telas afetadas.
    - **Uma funcionalidade específica**: só um recurso dentro da página (ex.: filtro da listagem, formulário de contato, paginação, modal de simulação), sem testar a página inteira.
+   Pergunte também, na mesma rodada, se o dev quer **somar uma exploração autônoma** das páginas afetadas (padrão: não). Ela pega erro fora dos critérios (exceção JS, link quebrado) quase sem custo de tokens.
 1a. **Se o escopo for uma funcionalidade**, pergunte em seguida, numa segunda rodada:
    - qual funcionalidade e onde ela fica (URL + como chegar nela: seletor, texto do botão, seção);
    - **como o dev quer que ela seja testada**: interação no navegador (`fluxo`, com vídeo quando há interação), print do estado (`print`), resposta do servidor (`http`), Lighthouse da página onde ela está, ou combinação;
@@ -93,10 +108,10 @@ Só começa quando o dev confirmar o ambiente e autorizar a execução.
 
 ### Runtime
 
-O script fica em `scripts/qa_evidencias.py`, na pasta desta skill (em geral `~/.claude/skills/qa-validacao-tasks`). Use o Python do runtime da skill:
+O script fica em `scripts/qa_evidencias.py`, na pasta desta skill (a pasta onde está este `SKILL.md`; depende da IA: `~/.claude/skills/`, `~/.agents/skills/`, `~/.codex/skills/`, `~/.gemini/skills/`…). Use o Python do runtime da skill:
 
 ```bash
-SK=~/.claude/skills/qa-validacao-tasks
+SK="${QA_SKILL_DIR:-$(for d in ~/.claude ~/.agents ~/.codex ~/.gemini ~/.cursor ~/.copilot ~/.config/opencode; do [ -f "$d/skills/qa-validacao-tasks/SKILL.md" ] && echo "$d/skills/qa-validacao-tasks" && break; done)}"
 PY="$SK/.venv/bin/python"; [ -x "$PY" ] || PY="$SK/.venv/Scripts/python.exe"   # Linux/macOS/WSL | Windows (Git Bash)
 qa() { "$PY" "$SK/scripts/qa_evidencias.py" "$@"; }   # função, não variável: zsh não quebra "$QA" em palavras
 ```
@@ -181,6 +196,57 @@ O relatório é gerado **mesmo que a execução seja interrompida ou que casos f
 - **Nunca envie formulário que cria dado real** (lead, cadastro, pedido, pagamento, e-mail, disparo de tracking de conversão) sem aprovação explícita para aquele caso. Na falta dela, capture o estado até antes do envio e marque o restante como `pendente`.
 - Não use nem registre credenciais, tokens ou dados pessoais nas evidências. Se aparecerem num header ou print, avise e peça para mascarar antes de compartilhar o PDF.
 - Caso de *Processo* (decisão, relatório externo, aprovação de PM): peça a evidência ao dev. Sem ela, o caso fica `pendente`.
+
+## Execução com multiagentes
+
+Use quando o plano tiver **6 casos ou mais** e a sua IA tiver subagentes. Com menos casos, o custo de explicar o contexto a cada agente passa do ganho. Sem subagentes, rode em sequência; o resultado é o mesmo.
+
+O `run.json` aceita escrita paralela (trava de arquivo, nomes de evidência reservados), então todos os agentes usam **a mesma `<run_dir>`**.
+
+1. **Você é o orquestrador.** Contexto, critérios, plano e ok do dev continuam com você, exatamente como no **Processo**. Depois do ok, rode `$QA init` uma vez.
+2. **Divida os casos em lotes** de 3 a 5, agrupados pela página ou pelo fluxo (mesma página = mesmo agente, que reaproveita seletor e dado de teste). No máximo 4 agentes ao mesmo tempo.
+3. **Lighthouse fica fora dos lotes.** Rode depois que os outros terminarem, um por vez: CPU disputada derruba a nota de performance e gera falso achado.
+4. **Briefing de cada subagente** (é o único contexto que ele tem, então seja completo e curto):
+   - o bloco **Runtime** desta skill (como definir `SK`/`qa`) e a `<run_dir>`;
+   - os casos do lote, copiados do plano (`id`, `criterio`, `passos`, `esperado`) e o ambiente;
+   - as regras: só os casos do lote; `--caso` e `--nome` em toda captura; registrar status com `$QA caso` logo após cada caso (com `--resumo`, `--observado`, `--destaque`); reproduzir divergência uma vez; seguir o orçamento de evidências e os limites da execução; **não** rodar `relatorio` nem mexer em caso de outro lote;
+   - a resposta esperada: **uma linha por caso** (`CT03 ✗ divergente: …`), nada mais.
+   - Se a ferramenta permitir escolher o modelo do subagente, use um modelo mais barato: o lote é execução mecânica de um plano já decidido.
+5. **Consolide** com `$QA status <run_dir>` (uma linha por caso; não leia o `run.json` inteiro). Caso que ficou `pendente` sem motivo vira nova rodada ou pergunta ao dev. Depois, `$QA relatorio`.
+
+A exploração autônoma também divide bem: um agente por área, cada um com `--semente` e `--prefixo-url` próprios e `--prefixo` diferente (`EXA`, `EXB`…).
+
+## Exploração autônoma
+
+Teste sem task: o script navega a aplicação sozinho, seguindo só links (GET), e registra o que quebrar. **Não clica em botão nem envia formulário**, e ignora URLs de logout/exclusão (`--ignorar`). Toda a varredura roda sem IA: você só lê o resumo no final.
+
+1. Pergunte, numa rodada só, o que faltar: URL base, limites (padrão 30 páginas, profundidade 2), área (`--prefixo-url`, ex.: `/ofertas`), viewport (desktop, mobile ou os dois). Produção só com autorização explícita. Confirme antes de rodar.
+2. Rode:
+   ```bash
+   $QA explorar <run_dir> <url> [--semente <url>] [--prefixo-url /area] [--max-paginas 30] [--profundidade 2] [--mobile] [--prefixo EX]
+   ```
+   Para mobile e desktop, rode duas vezes com `--prefixo` diferente (`EXD`, `EXM`).
+3. A saída é uma linha por check, e cada check vira um caso (`EX01`…`EX06`): páginas e links internos com erro, exceção JS, `console.error`, requisição da própria origem com erro, imagem quebrada, rolagem horizontal. Erro em domínio de terceiros vira `EX07` informativo (`pendente`). O detalhe por página fica em `evidencias/<prefixo>-explorar-log.txt`. Abra o log **só** para os casos `divergente`, e com `grep` no trecho que importa.
+4. **Triagem de cada divergente** (é aqui que a IA agrega valor): reproduza uma vez a página citada com `print` ou `fluxo` sem vídeo, investigue a causa provável (hipótese marcada como hipótese) e atualize o caso com `$QA caso` (`--observado`, `--destaque`). Falso positivo comprovado (ex.: erro esperado do ambiente de staging) vira `pulado` com o motivo, nunca `confirmado`.
+5. `$QA relatorio <run_dir>`. Sem task, o relatório mostra o escopo "Exploração autônoma".
+
+**Rodar sem ninguém olhando (cron/CI):** `explorar` não precisa de IA. Com `--falhar`, sai com código 1 quando acha erro; agende o comando e chame a IA só para triar quando o código for 1:
+
+```bash
+"$PY" "$SK/scripts/qa_evidencias.py" explorar "$QA_REPORTS_DIR/explora-$(date +%F)" https://staging.exemplo.com --falhar \
+  || echo "achou erro: abrir a IA e pedir a triagem desta pasta"
+```
+
+## Economia de tokens
+
+A regra geral: **o script trabalha, a IA decide**. O que custa token é a IA ler saída longa, não o navegador rodar.
+
+- Use os comandos do script em vez de navegar com ferramentas de browser da IA (MCP de navegador, leitura de página inteira). Uma chamada do script devolve poucas linhas.
+- Nunca leia `run.json`, `explorar.json`, HTML salvo ou o log inteiro. Use `$QA status`, a saída curta dos comandos e `grep` no log.
+- `--grep` no `http` em vez do body; asserts no `fluxo` em vez de olhar o print. Abra imagem só quando o assert não bastar para entender uma divergência.
+- Agrupe ações num fluxo só (arquivo `.json`) em vez de várias chamadas.
+- Exploração autônoma primeiro, IA depois: a varredura é de graça; gaste tokens só na triagem dos divergentes.
+- Em multiagentes, briefing curto e resposta de uma linha por caso; modelo mais barato nos subagentes quando der.
 
 ## O que evitar
 

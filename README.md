@@ -23,14 +23,16 @@ Abra o Claude Code nesta pasta. O CLAUDE.md é lido automaticamente. Para uma de
 
 Agente que recebe uma task (do jeito que ela chega, geralmente uma mensagem de Slack), monta o plano de teste a partir dos critérios de aceite, **executa os testes sozinho** contra o ambiente que você indicar e entrega um **relatório PDF com as evidências**: prints, vídeos, respostas HTTP e Lighthouse, incluindo o que falhou. Ele não aprova a task. Quem aprova é o dev/PM, com base no relatório.
 
-Por baixo, é distribuído como skill do Claude Code (`qa-validacao-tasks`): instruções em `SKILL.md` + runtime próprio em `scripts/`. Racional da execução pelo agente: [ADR-002](.claude/adr/adr-002-captura-de-evidencias-pelo-agente.md).
+Também tem **exploração autônoma**: sem task, varre a aplicação seguindo links e registra erros de página, JavaScript, console, rede, imagem e layout. Roda até sem IA (cron/CI).
+
+Por baixo, é distribuído como skill no formato aberto de Agent Skills (`qa-validacao-tasks`): instruções em `SKILL.md` + runtime próprio em `scripts/`. Funciona com **qualquer IA** que leia skills (Claude Code, Codex, Gemini CLI, Cursor, Copilot, OpenCode). Racional: [ADR-002](.claude/adr/adr-002-captura-de-evidencias-pelo-agente.md) (execução pelo agente) e [ADR-004](.claude/adr/adr-004-multiagentes-multi-ia-exploracao.md) (multiagentes, qualquer IA, exploração autônoma).
 
 ### Instalar
 
-**Pré-requisitos:** Claude Code, `git`, [`uv`](https://docs.astral.sh/uv/) (ou `python3-venv`) e Node/`npx` (para o Lighthouse). Funciona em Linux, macOS e WSL.
+**Pré-requisitos:** uma IA com suporte a skills (Claude Code, Codex, Gemini CLI, Cursor…), `git`, [`uv`](https://docs.astral.sh/uv/) (ou `python3-venv`) e Node/`npx` (para o Lighthouse). Funciona em Linux, macOS e WSL.
 
 Para o **modo automático** (task pelo link do Slack), também:
-- **Slack conectado ao Claude**: claude.ai → Configurações → Conectores → Slack (ou `/mcp` no Claude Code).
+- **Slack conectado à sua IA**: no Claude, claude.ai → Configurações → Conectores → Slack (ou `/mcp` no Claude Code); em outras IAs, o MCP do Slack na configuração de MCP dela.
 - **Chave SSH no GitHub com acesso à org `pyxys-inteligencia-digital`**: o agente baixa o PRD do `mzk-pm-workspace` por SSH. Confira com `bash ~/.claude/skills/qa-validacao-tasks/scripts/buscar_prd.sh --check`.
 
 **Qualquer dev, direto do GitHub** (precisa de acesso de leitura ao repo):
@@ -45,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/abnerndr/qa-agent-ai/master/tools/s
 ./tools/scripts/install-skill.sh
 ```
 
-As duas formas instalam em `~/.claude/skills/qa-validacao-tasks/` (escopo de usuário, então o agente fica disponível em **qualquer projeto** aberto no Claude Code) e rodam `scripts/setup.sh`. Esse setup cria um `.venv` próprio com Playwright + Chromium (~115 MB na primeira vez) e pré-carrega o Lighthouse. O projeto testado não recebe nenhuma dependência. Pule o setup com `QA_SKIP_SETUP=1`.
+Por padrão, as duas formas instalam no Claude (`~/.claude/skills/qa-validacao-tasks/`). Para outras IAs, passe `--ia` (`claude`, `agents`, `codex`, `gemini`, `cursor`, `copilot`, `opencode` ou `todas`) ou `--dir <pasta de skills>`; no remoto, `curl … | bash -s -- --ia todas`. A primeira pasta recebe a cópia real; as outras, um link para ela. Confira com `--list` e ajuste `--dir` se a sua IA usar outra pasta. É escopo de usuário: o agente fica disponível em **qualquer projeto** e rodam `scripts/setup.sh`. Esse setup cria um `.venv` próprio com Playwright + Chromium (~115 MB na primeira vez) e pré-carrega o Lighthouse. O projeto testado não recebe nenhuma dependência. Pule o setup com `QA_SKIP_SETUP=1`.
 
 **Windows (Claude Desktop, aba Code):** o Claude Desktop lê as skills de `C:\Users\<você>\.claude\skills\`. Copie a pasta da skill para lá e rode o setup pelo Git Bash do Windows (precisa de Python e Node no Windows):
 
@@ -70,9 +72,10 @@ echo 'export QA_REPORTS_DIR="$HOME/qa-relatorios"' >> ~/.zshrc
 ### Usar
 
 1. Suba a aplicação na branch da task (ex.: `localhost:3000`).
-2. Abra o Claude Code **no repositório do projeto testado**, pra o agente conseguir ler o diff.
+2. Abra a sua IA (Claude Code, Codex, Gemini CLI…) **no repositório do projeto testado**, pra o agente conseguir ler o diff.
 3. Peça a validação. O agente pergunta primeiro o **modo**:
    - **Manual** (padrão): você cola o texto da task e responde ao formulário de contexto.
+   - **Exploração autônoma**: sem task. Você passa a URL e os limites, e ele procura erros sozinho.
    - **Automático**: você cola só o link da task no Slack (registro da lista, ex.: `https://pyxys.slack.com/lists/…?record_id=Rec…`, ou link de mensagem). Ele confere a conexão com o Slack, lê o registro (ou a mensagem e a thread), acha o PRD citado na task (link do GitHub ou caminho relativo a `mzk-pm-workspace/artefatos/prds`) e usa os critérios da task, ou os do PRD quando a task não tiver. Pergunta só o que faltar (onde testar, confirmar a branch).
 
    Exemplo no modo manual:
@@ -102,6 +105,12 @@ echo 'export QA_REPORTS_DIR="$HOME/qa-relatorios"' >> ~/.zshrc
    - `fluxo`: cliques e preenchimentos no navegador. **Vídeo só em interação** (formulário, botão que muda estado, clicar na paginação), nunca em página estática ou onde a funcionalidade não aparece
    - `lighthouse`: performance, SEO, acessibilidade e boas práticas. Roda headless, dentro do WSL/Linux, sem abrir nada no Windows. Performance só vale em build de produção
 6. **Relatório PDF** em `$QA_REPORTS_DIR/<projeto>-<pr>/relatorio.pdf`: resumo por critério, divergências e decisões, pontos em aberto, status de cada caso (confirmado / divergente / pendente / pulado) e as evidências, **inclusive dos casos que falharam**.
+
+**Multiagentes:** com 6 casos ou mais e uma IA com subagentes, o agente divide os casos em lotes (por página/fluxo, até 4 agentes) que gravam na mesma execução em paralelo. O Lighthouse roda sozinho no fim, porque CPU disputada distorce a nota.
+
+**Exploração autônoma:** `qa_evidencias.py explorar <pasta> <url>` navega só por links (GET, sem clicar em botão nem enviar formulário) e gera os casos `EX01`–`EX07`. Com `--falhar`, sai com código 1 quando acha erro, para agendar no cron/CI e chamar a IA só para triar.
+
+**Economia de tokens:** o script faz o trabalho pesado e devolve poucas linhas; a IA lê `status`, resumos e `grep` no log, nunca o JSON ou o HTML inteiro.
 
 **Limites do agente:**
 - só leitura, só no ambiente que você indicou

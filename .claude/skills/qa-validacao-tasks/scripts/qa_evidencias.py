@@ -14,10 +14,14 @@ Subcomandos:
   print      screenshot de uma URL (desktop/mobile, com ou sem JS, página inteira ou seletor)
   fluxo      sequência de ações no navegador (goto/click/fill/...) com vídeo e prints
   lighthouse auditoria Lighthouse (performance, SEO, acessibilidade, boas práticas)
+  explorar   varre a aplicação sozinho (só GET, sem IA) e registra erros como casos
   caso       cria/atualiza um caso no run.json (status, observado, esperado...)
+  status     lista os casos e o status de cada um (uma linha por caso)
   relatorio  gera relatorio.html + relatorio.pdf a partir do run.json
 
 Toda evidência capturada com `--caso` é anexada automaticamente ao caso no run.json.
+Vários agentes podem rodar comandos na mesma RUN_DIR ao mesmo tempo: o run.json é
+gravado com trava de arquivo e os nomes de evidência são reservados atomicamente.
 Rode com o Python do runtime da skill: <skill>/.venv/bin/python scripts/qa_evidencias.py ...
 """
 
@@ -25,13 +29,18 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import datetime as dt
 import html
 import json
+import os
 import re
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 STATUS = ("confirmado", "divergente", "pendente", "pulado")
@@ -59,9 +68,38 @@ def load_run(run_dir: Path) -> dict:
 
 
 def save_run(run_dir: Path, run: dict) -> None:
-    run_path(run_dir).write_text(
-        json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    # grava num temporário e troca: quem lê nunca vê o arquivo pela metade
+    tmp = run_path(run_dir).with_name(f".run.json.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, run_path(run_dir))
+
+
+@contextlib.contextmanager
+def trava_run(run_dir: Path):
+    """Trava exclusiva do run.json: vários agentes atualizam casos diferentes em paralelo."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with open(run_dir / ".run.lock", "a+") as f:
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                try:
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def get_caso(run: dict, caso_id: str) -> dict:
@@ -76,26 +114,36 @@ def get_caso(run: dict, caso_id: str) -> dict:
 def anexar(run_dir: Path, caso_id: str | None, arquivos: list[Path]) -> None:
     if not caso_id:
         return
-    run = load_run(run_dir)
-    caso = get_caso(run, caso_id)
-    evid = caso.setdefault("evidencias", [])
-    for arq in arquivos:
-        rel = str(arq.relative_to(run_dir))
-        if rel not in evid:
-            evid.append(rel)
-    save_run(run_dir, run)
+    with trava_run(run_dir):
+        run = load_run(run_dir)
+        caso = get_caso(run, caso_id)
+        evid = caso.setdefault("evidencias", [])
+        for arq in arquivos:
+            rel = arq.relative_to(run_dir).as_posix()
+            if rel not in evid:
+                evid.append(rel)
+        save_run(run_dir, run)
 
 
-def proximo_arquivo(run_dir: Path, caso_id: str | None, nome: str | None, ext: str) -> Path:
+def proximo_arquivo(run_dir: Path, caso_id: str | None, nome: str | None, ext: str,
+                    reservar: bool = True) -> Path:
     pasta = run_dir / "evidencias"
     pasta.mkdir(parents=True, exist_ok=True)
     base = "-".join(p for p in (caso_id, slug(nome) if nome else None) if p) or "evidencia"
     alvo = pasta / f"{base}{ext}"
     n = 2
-    while alvo.exists():
-        alvo = pasta / f"{base}-{n}{ext}"
-        n += 1
-    return alvo
+    while True:
+        try:
+            if not reservar:
+                if alvo.exists():
+                    raise FileExistsError
+                return alvo
+            # cria o arquivo vazio de forma exclusiva: dois agentes nunca pegam o mesmo nome
+            with open(alvo, "x"):
+                return alvo
+        except FileExistsError:
+            alvo = pasta / f"{base}-{n}{ext}"
+            n += 1
 
 
 def slug(texto: str) -> str:
@@ -108,45 +156,61 @@ def cmd_init(a: argparse.Namespace) -> None:
     run_dir = Path(a.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "evidencias").mkdir(exist_ok=True)
-    if a.plano:
-        run = json.loads(Path(a.plano).read_text(encoding="utf-8"))
-    elif run_path(run_dir).exists():
-        run = load_run(run_dir)
-    else:
-        run = {}
-    for campo in ("titulo", "projeto", "pr", "branch", "ambiente", "responsavel"):
-        valor = getattr(a, campo)
-        if valor:
-            run[campo] = valor
-    run.setdefault("data", dt.date.today().isoformat())
-    for chave in ("criterios", "divergencias", "pontos_em_aberto", "casos"):
-        run.setdefault(chave, [])
-    for caso in run["casos"]:
-        caso.setdefault("status", "pendente")
-        caso.setdefault("evidencias", [])
-    save_run(run_dir, run)
+    with trava_run(run_dir):
+        if a.plano:
+            run = json.loads(Path(a.plano).read_text(encoding="utf-8"))
+        elif run_path(run_dir).exists():
+            run = load_run(run_dir)
+        else:
+            run = {}
+        for campo in ("titulo", "projeto", "pr", "branch", "ambiente", "responsavel"):
+            valor = getattr(a, campo)
+            if valor:
+                run[campo] = valor
+        run.setdefault("data", dt.date.today().isoformat())
+        for chave in ("criterios", "divergencias", "pontos_em_aberto", "casos"):
+            run.setdefault(chave, [])
+        for caso in run["casos"]:
+            caso.setdefault("status", "pendente")
+            caso.setdefault("evidencias", [])
+        save_run(run_dir, run)
     print(f"[ok] {run_path(run_dir)}")
 
 
 def cmd_caso(a: argparse.Namespace) -> None:
     run_dir = Path(a.run_dir)
-    run = load_run(run_dir)
-    caso = get_caso(run, a.id)
-    for campo in ("criterio", "titulo", "tipo", "passos", "esperado", "observado", "resumo", "status"):
-        valor = getattr(a, campo)
-        if valor is not None:
-            caso[campo] = valor
+
     def rel(arq: str) -> str:
         p = Path(arq)
-        return str(p.relative_to(run_dir)) if p.is_absolute() else arq
-    for arq in (a.evidencia or []) + (a.destaque or []):
-        if rel(arq) not in caso.setdefault("evidencias", []):
-            caso["evidencias"].append(rel(arq))
-    if a.destaque:
-        # destaque = evidência mostrada no PDF; o resto fica só listado (ou no --completo)
-        caso["destaques"] = [rel(arq) for arq in a.destaque]
-    save_run(run_dir, run)
+        return p.relative_to(run_dir.resolve()).as_posix() if p.is_absolute() else arq
+
+    with trava_run(run_dir):
+        run = load_run(run_dir)
+        caso = get_caso(run, a.id)
+        for campo in ("criterio", "titulo", "tipo", "passos", "esperado", "observado", "resumo", "status"):
+            valor = getattr(a, campo)
+            if valor is not None:
+                caso[campo] = valor
+        for arq in (a.evidencia or []) + (a.destaque or []):
+            if rel(arq) not in caso.setdefault("evidencias", []):
+                caso["evidencias"].append(rel(arq))
+        if a.destaque:
+            # destaque = evidência mostrada no PDF; o resto fica só listado (ou no --completo)
+            caso["destaques"] = [rel(arq) for arq in a.destaque]
+        save_run(run_dir, run)
     print(f"[ok] {a.id}: {caso.get('status')}")
+
+
+def cmd_status(a: argparse.Namespace) -> None:
+    """Uma linha por caso: o orquestrador consolida o trabalho dos agentes sem ler o run.json."""
+    run = load_run(Path(a.run_dir))
+    casos = run.get("casos", [])
+    if a.so:
+        casos = [c for c in casos if c.get("status", "pendente") in a.so]
+    for c in casos:
+        print(f"{c.get('id', '?'):<7} {c.get('status', 'pendente'):<11} {_resumo(c) or c.get('titulo', '')}")
+    todos = run.get("casos", [])
+    print(" · ".join(f"{s}={sum(1 for c in todos if c.get('status', 'pendente') == s)}" for s in STATUS))
 
 
 # ---------------------------------------------------------------- http
@@ -266,7 +330,7 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
     """
     run_dir = Path(a.run_dir)
     acoes = json.loads(Path(a.acoes).read_text(encoding="utf-8")) if Path(a.acoes).exists() else json.loads(a.acoes)
-    video_tmp = run_dir / "evidencias" / ".video-tmp"
+    video_tmp = run_dir / "evidencias" / f".video-tmp-{os.getpid()}"  # por processo: fluxos paralelos
     arquivos: list[Path] = []
     log: list[str] = []
     erro = None
@@ -379,7 +443,7 @@ def cmd_fluxo(a: argparse.Namespace) -> None:
             ctx.close()
             if video:
                 destino = proximo_arquivo(run_dir, a.caso, a.nome or "fluxo", ".webm")
-                Path(video.path()).rename(destino)
+                os.replace(video.path(), destino)
                 arquivos.append(destino)
             browser.close()
 
@@ -424,16 +488,14 @@ def cmd_lighthouse(a: argparse.Namespace) -> None:
         sys.exit(f"[erro] Chromium do Playwright não encontrado em {chrome} — rode scripts/setup.sh")
 
     preset = "desktop" if a.desktop else "mobile"
-    base = proximo_arquivo(run_dir, a.caso, f"{a.nome or 'lighthouse'}-{preset}", "")
+    base = proximo_arquivo(run_dir, a.caso, f"{a.nome or 'lighthouse'}-{preset}", "", reservar=False)
 
     # O Chrome é iniciado aqui, e não pelo chrome-launcher do Lighthouse: no WSL o
     # chrome-launcher cria pastas lighthouse.XXXX no AppData\Local do Windows.
     # Perfil temporário em /tmp (Linux) e sem DISPLAY/WAYLAND_DISPLAY: nada toca o
     # Windows e nenhuma janela abre via WSLg, mesmo que o --headless seja ignorado.
-    import os
     import socket
     import tempfile
-    import time
     import urllib.request as _ur
 
     env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
@@ -517,6 +579,181 @@ def cmd_lighthouse(a: argparse.Namespace) -> None:
     anexar(run_dir, a.caso, [resumo, html_file])
     print("\n".join(linhas))
     print(f"\n[ok] evidência: {resumo}\n[ok] evidência: {html_file}")
+
+
+# ---------------------------------------------------------------- explorar
+
+EXP_IGNORAR = r"(?i)(logout|log-out|signout|sign-out|sair|excluir|delete|remover|unsubscribe|descadastr)"
+EXP_ARQUIVOS = re.compile(r"(?i)\.(pdf|zip|rar|gz|jpe?g|png|gif|webp|avif|svg|ico|mp4|webm|mp3|docx?|xlsx?|pptx?|csv|xml|txt|json)$")
+# (id, título, esperado, chave em cada página). Mesmo check em N páginas = um caso só.
+EXP_CHECKS = (
+    ("01", "Páginas e links internos respondem sem erro", "nenhuma página/link interno com status ≥ 400 ou falha de navegação", "pagina"),
+    ("02", "Sem exceções JavaScript não tratadas", "0 eventos pageerror", "js"),
+    ("03", "Sem erros no console", "0 console.error", "console"),
+    ("04", "Requisições da própria origem sem falha", "nenhuma requisição same-origin com status ≥ 400 ou falha de rede", "rede"),
+    ("05", "Imagens carregam", "nenhuma <img> quebrada (naturalWidth = 0)", "imagens"),
+    ("06", "Sem rolagem horizontal", "scrollWidth ≤ largura da viewport", "overflow"),
+)
+
+
+def cmd_explorar(a: argparse.Namespace) -> None:
+    """Teste autônomo: navega a aplicação a partir de URLs-semente seguindo só links (GET).
+
+    Não clica em botões nem envia formulário. Em cada página coleta status, exceções JS,
+    console.error, requisições com erro, imagens quebradas e rolagem horizontal. O resultado
+    vira um caso por tipo de problema (prefixo --prefixo, ex.: EX01..EX06), com status
+    `divergente` quando algo foi achado. A saída no terminal é curta de propósito: a IA lê
+    o resumo e só abre o log (evidencias/<prefixo>-explorar-log.txt) quando precisa.
+    """
+    run_dir = Path(a.run_dir)
+    sementes = [a.url] + (a.semente or [])
+    origem = urllib.parse.urlsplit(a.url)
+    ignorar = re.compile(a.ignorar) if a.ignorar else None
+
+    def normalizar(u: str) -> str:
+        p = urllib.parse.urlsplit(u)
+        return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path or "/", p.query if a.com_query else "", ""))
+
+    def aceita(u: str) -> bool:
+        p = urllib.parse.urlsplit(u)
+        return (p.scheme in ("http", "https") and p.netloc == origem.netloc
+                and p.path.startswith(a.prefixo_url) and not EXP_ARQUIVOS.search(p.path)
+                and not (ignorar and ignorar.search(u)))
+
+    fila = deque((normalizar(s), 0, None) for s in sementes)
+    vistos = {f[0] for f in fila}
+    paginas: list[dict] = []
+    prints: dict[str, Path] = {}
+
+    with _playwright()() as p:
+        browser = p.chromium.launch()
+        ctx = browser.new_context(**_contexto_opts(a))
+        page = ctx.new_page()
+        page.set_default_timeout(a.timeout * 1000)
+        atual: dict = {}
+
+        def mesma_origem(u: str) -> bool:
+            return urllib.parse.urlsplit(u).netloc == origem.netloc
+
+        def on_console(m):
+            # "Failed to load resource" repete o que os checks de página/rede já registram
+            if m.type == "error" and not m.text.startswith("Failed to load resource"):
+                atual["console"].append(m.text[:300])
+
+        def on_falha(r):
+            erro = r.failure or ""
+            if "ERR_ABORTED" in erro or r.url == atual.get("url"):  # navegação cancelada não é bug
+                return
+            alvo = "rede" if mesma_origem(r.url) else "terceiros"
+            atual[alvo].append(f"falha {r.method} {r.url[:200]} ({erro})")
+
+        def on_resposta(r):
+            if r.status >= 400 and r.request.resource_type != "document":
+                alvo = "rede" if mesma_origem(r.url) else "terceiros"
+                atual[alvo].append(f"{r.status} {r.request.method} {r.url[:200]}")
+
+        page.on("console", on_console)
+        page.on("pageerror", lambda e: atual["js"].append(str(e)[:300]))
+        page.on("requestfailed", on_falha)
+        page.on("response", on_resposta)
+
+        while fila and len(paginas) < a.max_paginas:
+            url, prof, origem_link = fila.popleft()
+            atual.clear()
+            atual.update(url=url, js=[], console=[], rede=[], terceiros=[], imagens=[], overflow=[], pagina=[])
+            status = None
+            try:
+                resp = page.goto(url, wait_until=a.wait_until)
+                status = resp.status if resp else None
+                page.wait_for_timeout(a.espera_ms)  # deixa hidratação/efeitos dispararem erros
+                if status and status >= 400:
+                    atual["pagina"].append(f"HTTP {status}" + (f" (link vindo de {origem_link})" if origem_link else ""))
+                if not mesma_origem(page.url):
+                    atual["pagina"].append(f"redirecionou para fora: {page.url[:200]}")
+                atual["imagens"] += page.evaluate(
+                    "[...document.images].filter(i => i.complete && i.currentSrc && i.naturalWidth === 0)"
+                    ".map(i => i.currentSrc.slice(0, 200))")
+                largura = page.evaluate("[document.documentElement.scrollWidth, innerWidth]")
+                if largura[0] > largura[1] + 1:
+                    atual["overflow"].append(f"scrollWidth {largura[0]}px > viewport {largura[1]}px")
+                if prof < a.profundidade and mesma_origem(page.url):
+                    for href in page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)"):
+                        alvo = normalizar(href)
+                        if alvo not in vistos and aceita(alvo):
+                            vistos.add(alvo)
+                            fila.append((alvo, prof + 1, url))
+            except Exception as e:  # falha de navegação também é achado
+                atual["pagina"].append(f"{type(e).__name__}: {str(e).splitlines()[0][:200]}")
+            problemas = {k: list(atual[k]) for k in [c[3] for c in EXP_CHECKS] + ["terceiros"]}
+            achou = any(problemas[c[3]] for c in EXP_CHECKS)
+            if achou and len(prints) < a.max_prints:
+                try:
+                    arq = proximo_arquivo(run_dir, a.prefixo, f"explorar-{len(paginas) + 1:02d}", ".png")
+                    page.screenshot(path=str(arq))
+                    prints[url] = arq
+                except Exception:
+                    pass
+            paginas.append({"url": url, "status": status, "profundidade": prof, **problemas})
+        browser.close()
+
+    # log completo para quem precisar investigar; o terminal só recebe o resumo
+    log = [f"# Exploração autônoma — {a.url}", f"{len(paginas)} página(s), profundidade ≤ {a.profundidade}, "
+           f"{'mobile' if a.mobile else 'desktop'}, JS {'off' if a.no_js else 'on'}", ""]
+    for pg in paginas:
+        itens = [(k, v) for k, v in pg.items() if isinstance(v, list) and v]
+        log.append(f"[{pg['status'] or '—'}] {pg['url']}" + ("" if itens else "  ✓"))
+        for k, v in itens:
+            log += [f"    {k}: {x}" for x in v[:10]] + ([f"    {k}: … +{len(v) - 10}"] if len(v) > 10 else [])
+    log_file = proximo_arquivo(run_dir, a.prefixo, "explorar-log", ".txt")
+    log_file.write_text("\n".join(log), encoding="utf-8")
+    json_file = proximo_arquivo(run_dir, a.prefixo, "explorar", ".json")
+    json_file.write_text(json.dumps(paginas, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with trava_run(run_dir):
+        run = load_run(run_dir) if run_path(run_dir).exists() else {
+            "titulo": f"Exploração autônoma — {origem.netloc}", "ambiente": a.url,
+            "data": dt.date.today().isoformat(), "escopo": {"tipo": "exploratorio"},
+            "criterios": [], "divergencias": [], "pontos_em_aberto": [], "casos": []}
+        criterio = a.prefixo
+        if not any(c.get("id") == criterio for c in run.setdefault("criterios", [])):
+            run["criterios"].append({"id": criterio, "texto": (
+                f"Exploração autônoma a partir de {', '.join(sementes)}: a aplicação navega sem erros "
+                "de página, JavaScript, console, rede, imagem ou layout (não vem da task)")})
+        saida = []
+        checks = list(EXP_CHECKS)
+        if any(pg["terceiros"] for pg in paginas):
+            checks.append(("07", "Recursos de terceiros (informativo)", "sem erro em domínios de terceiros", "terceiros"))
+        for num, titulo, esperado, chave in checks:
+            com = [pg for pg in paginas if pg[chave]]
+            mensagens: dict[str, int] = {}
+            for pg in com:
+                for m in set(pg[chave]):
+                    mensagens[m] = mensagens.get(m, 0) + 1
+            top = sorted(mensagens.items(), key=lambda kv: -kv[1])[:5]
+            caso = get_caso(run, f"{a.prefixo}{num}")
+            caso.update(criterio=criterio, titulo=titulo, tipo="Exploratório",
+                        passos=f"`explorar` em {len(paginas)} página(s)", esperado=esperado)
+            if not com:
+                caso.update(status="confirmado", resumo=f"0 de {len(paginas)} páginas com problema",
+                            observado=f"Nenhum problema em {len(paginas)} página(s).")
+            else:
+                caso.update(
+                    status="pendente" if chave == "terceiros" else "divergente",
+                    resumo=f"{len(com)} de {len(paginas)} páginas: {top[0][0][:110]}",
+                    observado="\n".join(f"{n}× página(s): {m}" for m, n in top)
+                              + "\nPáginas: " + ", ".join(pg["url"] for pg in com[:8])
+                              + (f" … +{len(com) - 8}" if len(com) > 8 else ""))
+            evid = [log_file] + [prints[pg["url"]] for pg in com if pg["url"] in prints][:2]
+            caso["evidencias"] = [e.relative_to(run_dir).as_posix() for e in evid]
+            caso["destaques"] = caso["evidencias"][1:2] or caso["evidencias"][:1]
+            saida.append(f"{caso['id']} {'✓' if caso['status'] == 'confirmado' else '✗'} {caso['status']}: {caso['resumo']}")
+        save_run(run_dir, run)
+
+    print(f"[ok] {len(paginas)} página(s) exploradas, {len(prints)} print(s)")
+    print("\n".join(saida))
+    print(f"[ok] log: {log_file}")
+    if a.falhar and any(" divergente:" in linha for linha in saida):
+        sys.exit(1)  # para CI/cron: código 1 quando a exploração acha erro
 
 
 # ---------------------------------------------------------------- relatório
@@ -662,6 +899,8 @@ def montar_html(run_dir: Path, run: dict, completo: bool = False) -> str:
         meta.insert(4, ("Escopo", f"Funcionalidade: {escopo.get('funcionalidade') or '—'} (o resto da página não foi validado)"))
         if escopo.get("como_testar"):
             meta.insert(5, ("Como testar", escopo["como_testar"]))
+    elif escopo.get("tipo") == "exploratorio":
+        meta.insert(4, ("Escopo", "Exploração autônoma (sem task): erros de página, JS, console, rede, imagem e layout"))
     else:
         meta.insert(4, ("Escopo", "Task completa"))
     fontes = run.get("fontes") or {}
@@ -870,6 +1109,27 @@ def main() -> None:
     sp.add_argument("--categorias", default="performance,seo,accessibility,best-practices")
     sp.add_argument("--timeout", type=int, default=240, help="segundos")
     sp.set_defaults(fn=cmd_lighthouse)
+
+    sp = sub.add_parser("explorar", help="teste autônomo: varre a aplicação (só GET) e registra erros como casos")
+    sp.add_argument("run_dir")
+    sp.add_argument("url", help="URL inicial; só links da mesma origem são seguidos")
+    sp.add_argument("--semente", action="append", help="outra URL inicial (repetível; divide a área entre agentes)")
+    sp.add_argument("--prefixo", default="EX", help="prefixo dos casos e do critério (padrão EX → EX01..EX07)")
+    sp.add_argument("--max-paginas", type=int, default=30)
+    sp.add_argument("--profundidade", type=int, default=2, help="cliques de link a partir das sementes")
+    sp.add_argument("--prefixo-url", default="/", help="só segue caminhos que começam com isto, ex.: /ofertas")
+    sp.add_argument("--com-query", action="store_true", help="trata ?query diferente como outra página")
+    sp.add_argument("--ignorar", default=EXP_IGNORAR, help="regex de URLs que nunca são abertas")
+    sp.add_argument("--espera-ms", type=int, default=1500, help="espera após o load para pegar erros tardios")
+    sp.add_argument("--max-prints", type=int, default=6, help="prints só de páginas com problema")
+    sp.add_argument("--falhar", action="store_true", help="sai com código 1 se achar erro (CI/cron)")
+    nav_args(sp)
+    sp.set_defaults(fn=cmd_explorar)
+
+    sp = sub.add_parser("status", help="uma linha por caso + contagem")
+    sp.add_argument("run_dir")
+    sp.add_argument("--so", nargs="+", choices=STATUS, help="filtra por status")
+    sp.set_defaults(fn=cmd_status)
 
     sp = sub.add_parser("relatorio", help="gera relatorio.html + relatorio.pdf")
     sp.add_argument("run_dir")

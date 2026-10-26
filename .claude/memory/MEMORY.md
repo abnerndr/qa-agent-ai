@@ -10,3 +10,4 @@
 - [Chat IA MZK — Fase 2 feedback](chat-ia-mzk-feedback-fase2.md) — onde fica back/front do chat e plano CA1–CA16
 - [PRDs no mzk-pm-workspace](prds-mzk-pm-workspace.md) — onde ficam os PRDs, como completar o caminho, SSH obrigatório
 - [Tasks na Slack List PX | Tech 2026](tasks-slack-list-px-tech.md) — link de task é /lists/…?record_id=Rec…; ler via slack_read_list + script
+- [Estratégia de branches](estrategia-branches.md) — trabalho novo só na `project`; `master` e `pyxys_version` intocadas
