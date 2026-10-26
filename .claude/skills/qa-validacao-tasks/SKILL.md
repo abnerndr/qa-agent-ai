@@ -20,7 +20,7 @@ Esta skill segue o formato aberto de Agent Skills (`SKILL.md` + `scripts/`) e n�
 | Capacidade | Claude Code | Outras IAs (Codex, Gemini CLI, Cursor, Copilot, OpenCode…) |
 |---|---|---|
 | Perguntar ao dev com opções | `AskUserQuestion` | pergunta numerada no chat, uma rodada por vez |
-| Subagentes (execução em paralelo) | `Agent`/Task | o recurso de subagente da ferramenta; sem ele, rode em sequência |
+| Subagentes (execução em paralelo) | `Agent` com o agente `qa-executor` | Cursor e Kiro: agente `qa-executor` (instalado junto); Codex e outras: o recurso de subagente da ferramenta, com o briefing completo; sem subagente, rode em sequência |
 | Ler Slack | MCP do Slack | MCP do Slack configurado na ferramenta; sem MCP, use o modo manual |
 | Rodar comandos | Bash | terminal/shell da ferramenta |
 
@@ -108,10 +108,11 @@ Só começa quando o dev confirmar o ambiente e autorizar a execução.
 
 ### Runtime
 
-O script fica em `scripts/qa_evidencias.py`, na pasta desta skill (a pasta onde está este `SKILL.md`; depende da IA: `~/.claude/skills/`, `~/.agents/skills/`, `~/.codex/skills/`, `~/.gemini/skills/`…). Use o Python do runtime da skill:
+O script fica em `scripts/qa_evidencias.py`, na pasta desta skill (a pasta onde está este `SKILL.md`; depende da IA: `~/.claude/skills/`, `~/.agents/skills/`, `~/.codex/skills/`, `~/.kiro/skills/`…). Use o Python do runtime da skill. A linha abaixo escolhe a primeira instalação que tem o runtime (`.venv`), porque nem toda cópia tem:
 
 ```bash
-SK="${QA_SKILL_DIR:-$(for d in ~/.claude ~/.agents ~/.codex ~/.gemini ~/.cursor ~/.copilot ~/.config/opencode; do [ -f "$d/skills/qa-validacao-tasks/SKILL.md" ] && echo "$d/skills/qa-validacao-tasks" && break; done)}"
+SK="${QA_SKILL_DIR:-$(for d in ~/.claude ~/.agents ~/.codex ~/.gemini ~/.cursor ~/.kiro ~/.copilot ~/.config/opencode; do [ -d "$d/skills/qa-validacao-tasks/.venv" ] && echo "$d/skills/qa-validacao-tasks" && break; done)}"
+[ -n "$SK" ] || SK="$(for d in ~/.claude ~/.agents ~/.codex ~/.gemini ~/.cursor ~/.kiro ~/.copilot ~/.config/opencode; do [ -f "$d/skills/qa-validacao-tasks/SKILL.md" ] && echo "$d/skills/qa-validacao-tasks" && break; done)"   # sem runtime ainda: rode o setup abaixo
 PY="$SK/.venv/bin/python"; [ -x "$PY" ] || PY="$SK/.venv/Scripts/python.exe"   # Linux/macOS/WSL | Windows (Git Bash)
 qa() { "$PY" "$SK/scripts/qa_evidencias.py" "$@"; }   # função, não variável: zsh não quebra "$QA" em palavras
 ```
@@ -217,12 +218,12 @@ O `run.json` aceita escrita paralela (trava de arquivo, nomes de evidência rese
 1. **Você é o orquestrador.** Contexto, critérios, plano e ok do dev continuam com você, exatamente como no **Processo**. Depois do ok, rode `$QA init` uma vez.
 2. **Divida os casos em lotes** de 3 a 5, agrupados pela página ou pelo fluxo (mesma página = mesmo agente, que reaproveita seletor e dado de teste). No máximo 4 agentes ao mesmo tempo.
 3. **Lighthouse fica fora dos lotes.** Rode depois que os outros terminarem, um por vez: CPU disputada derruba a nota de performance e gera falso achado.
-4. **Briefing de cada subagente** (é o único contexto que ele tem, então seja completo e curto):
-   - o bloco **Runtime** desta skill (como definir `SK`/`qa`) e a `<run_dir>`;
-   - os casos do lote, copiados do plano (`id`, `criterio`, `passos`, `esperado`) e o ambiente;
-   - as regras: só os casos do lote; `--caso` e `--nome` em toda captura; registrar status com `$QA caso` logo após cada caso (com `--resumo`, `--observado`, `--destaque`); reproduzir divergência uma vez; seguir o orçamento de evidências e os limites da execução; **não** rodar `relatorio` nem mexer em caso de outro lote;
-   - a resposta esperada: **uma linha por caso** (`CT03 ✗ divergente: …`), nada mais.
-   - Se a ferramenta permitir escolher o modelo do subagente, use um modelo mais barato: o lote é execução mecânica de um plano já decidido.
+4. **Despache cada lote.** Se a IA tiver o agente **`qa-executor`** (Claude Code, Cursor, Kiro; o instalador cria), use-o: ele já traz o runtime, as regras e o formato de resposta, e roda num modelo mais barato. O briefing fica só com: `<run_dir>`, ambiente, os casos do lote copiados do plano (`id`, `criterio`, `passos`, `esperado`) e qualquer autorização específica (ex.: "pode enviar o formulário do CT05").
+   Sem `qa-executor` (Codex e outras), o briefing é o único contexto do subagente. Inclua também:
+   - o bloco **Runtime** desta skill (como definir `SK`/`qa`);
+   - as regras: só os casos do lote; `--caso` e `--nome` em toda captura; registrar status com `$QA caso` logo após cada caso (com `--resumo`, `--observado`, `--destaque`); reproduzir divergência uma vez; seguir o orçamento de evidências e os limites da execução; **não** rodar `relatorio`, `painel` nem `github`, e não mexer em caso de outro lote;
+   - a resposta esperada: **uma linha por caso** (`CT03 ✗ divergente: …`), nada mais;
+   - se a ferramenta permitir escolher o modelo do subagente, um modelo mais barato: o lote é execução mecânica de um plano já decidido.
 5. **Consolide** com `$QA status <run_dir>` (uma linha por caso; não leia o `run.json` inteiro). Caso que ficou `pendente` sem motivo vira nova rodada ou pergunta ao dev. Depois, `$QA relatorio`.
 
 A exploração autônoma também divide bem: um agente por área, cada um com `--semente` e `--prefixo-url` próprios e `--prefixo` diferente (`EXA`, `EXB`…).

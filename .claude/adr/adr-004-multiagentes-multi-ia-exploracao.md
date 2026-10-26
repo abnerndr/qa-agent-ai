@@ -43,3 +43,11 @@ Duplicaria ~115 MB por IA. Link simbólico para a primeira instalação, com có
 - Subagentes recebem só o briefing: se ele for incompleto, o lote volta `pendente`. A consolidação com `status` deixa isso visível.
 - A exploração não testa áreas atrás de login nem fluxos interativos.
 - O modo automático (Slack + PRD por SSH) continua específico da PYXYS nesta branch.
+
+---
+
+## Adendo (2026-10-25): Kiro, Windows e agente `qa-executor`
+
+- O instalador ganhou o alvo `kiro` (`~/.kiro/skills`) e `--windows`, que no WSL copia a skill para o perfil do Windows, onde rodam Cursor e Kiro. Lá é sempre cópia, porque o Windows não segue link do WSL. A SKILL.md escolhe a primeira instalação com `.venv`, então as cópias do Windows usam o runtime que já existir naquele lado.
+- O lote dos multiagentes ganhou um agente próprio, `qa-executor` (`agents/qa-executor.md` na skill), instalado no formato de cada IA: Claude Code e Cursor em `.md` (modelo Haiku/`fast`) e Kiro em `.json`. Ele já traz runtime, regras e formato de resposta, então o briefing fica só com pasta, ambiente e casos. No Codex e nas outras IAs, o subagente da ferramenta recebe o briefing completo.
+- Verificado nos binários instalados: o Codex lê `~/.agents/skills` e `~/.codex/skills`; o Cursor lê `~/.cursor/skills`, `~/.claude/skills`, `~/.agents/skills` e `~/.cursor/agents`; o Kiro lê `~/.kiro/skills`, `.agents/skills` e `.claude/skills`, e agentes de usuário em `~/.kiro/agents`. O formato JSON do agente no Kiro IDE não foi validado.
