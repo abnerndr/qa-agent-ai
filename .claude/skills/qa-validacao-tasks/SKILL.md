@@ -172,6 +172,8 @@ Pasta da execução: `${QA_REPORTS_DIR:-$HOME/qa-relatorios}/<projeto>-<pr-ou-ta
 4. **Divergência: reproduza uma vez antes de registrar.** Rode de novo sem vídeo. Se repetir, registre `divergente` e anote "reproduzido 2/2". Se não repetir, registre `pendente` como instável ("1/2"), com as duas evidências. Não pare para corrigir e não tente "fazer passar".
 5. **No chat, uma linha por caso**: `CT03 ✗ divergente: esperado /page/2, URL ficou na base`. Sem repetir o log nem o plano.
 6. **Gerar o relatório**: `$QA relatorio <run_dir>` gera `relatorio.html` e `relatorio.pdf` no formato enxuto: resumo por critério, achados (divergentes e pendentes) com detalhe, tabela de casos com uma linha cada, e só as evidências de destaque. `--completo` gera `relatorio-completo.pdf` com todas as evidências, passos e o texto da task. Use só se o dev pedir. Antes de entregar, resolva os `[aviso]` que o comando imprime (caso sem resumo, sem evidência, excesso de arquivos). Entregue o caminho do PDF e o resumo por critério.
+7. **Atualizar o painel**: `$QA painel` regenera `${QA_REPORTS_DIR:-~/qa-relatorios}/index.html`, que mostra todas as execuções agrupadas por aplicação (status de cada caso, ambiente, links do PDF, issues e PR). Informe o caminho ao dev.
+8. **Oferecer issues/PR** quando houver divergentes: veja **GitHub**.
 
 ### Orçamento de evidências
 
@@ -196,6 +198,15 @@ O relatório é gerado **mesmo que a execução seja interrompida ou que casos f
 - **Nunca envie formulário que cria dado real** (lead, cadastro, pedido, pagamento, e-mail, disparo de tracking de conversão) sem aprovação explícita para aquele caso. Na falta dela, capture o estado até antes do envio e marque o restante como `pendente`.
 - Não use nem registre credenciais, tokens ou dados pessoais nas evidências. Se aparecerem num header ou print, avise e peça para mascarar antes de compartilhar o PDF.
 - Caso de *Processo* (decisão, relatório externo, aprovação de PM): peça a evidência ao dev. Sem ela, o caso fica `pendente`.
+
+## GitHub: issues e PR
+
+O agente transforma achados em issues e abre o PR da correção. **Publicar no GitHub é ação externa**: nada é enviado sem o ok explícito do dev para aquela execução.
+
+- **Configuração** (uma vez): `~/.config/qa-agent/.env`, a partir do `.env.example` da skill (token fine-grained, mapa `projeto=dono/repo`, rótulos). Sem token, usa o login do `gh`. Confira com `$QA github check <run_dir>`. Nunca peça nem leia o token no chat: o dev preenche o arquivo.
+- **Issues**: `$QA github issues <run_dir>` mostra a prévia (uma linha por divergente; `--mostrar` traz o corpo). Mostre a lista ao dev, pergunte quais viram issue e só então rode com `--criar [--casos CT03 CT07]`. Uma issue por caso, com rótulo `qa-agent` e marcador que evita duplicar; o link volta para o caso no `run.json` e aparece no painel. Pendente só com `--incluir-pendentes`. O GitHub não recebe as imagens pela API: o corpo lista os arquivos de evidência para o dev anexar se quiser.
+- **PR**: só quando o dev pedir que você corrija. Corrija numa branch nova (nunca na padrão), mostre o diff, faça commit e `git push` com o ok dele e depois `$QA github pr <run_dir> --head <branch>` (prévia) → `--criar`. Abre como rascunho (`--pronto` para revisão), com a tabela dos achados e `Closes #n` das issues. Depois do merge, rode a validação de novo.
+- O script recusa enviar corpo que pareça conter credencial (`Authorization`, token, senha, cookie). Mascare o caso e rode de novo. Dado de cliente nas evidências também precisa de ok antes de virar issue.
 
 ## Execução com multiagentes
 
@@ -254,6 +265,7 @@ A regra geral: **o script trabalha, a IA decide**. O que custa token é a IA ler
 - Não limite os casos ao caminho feliz.
 - Não misture UI e API no mesmo caso.
 - **Não execute antes de entregar o plano e ter o ok do dev.**
+- **Não rode `github ... --criar` nem `git push` sem o ok do dev** para aquela execução.
 - **Não omita casos que falharam** nem troque o status para "passar". Divergência com evidência é o resultado mais útil do relatório.
 - **Não declare veredito geral** ("task aprovada/reprovada"), nem no chat nem no PDF.
 - Não capture evidência "por garantia": siga o orçamento de evidências.

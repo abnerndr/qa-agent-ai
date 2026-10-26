@@ -110,6 +110,10 @@ echo 'export QA_REPORTS_DIR="$HOME/qa-relatorios"' >> ~/.zshrc
 
 **Exploração autônoma:** `qa_evidencias.py explorar <pasta> <url>` navega só por links (GET, sem clicar em botão nem enviar formulário) e gera os casos `EX01`–`EX07`. Com `--falhar`, sai com código 1 quando acha erro, para agendar no cron/CI e chamar a IA só para triar.
 
+**Painel:** `qa_evidencias.py painel` gera `~/qa-relatorios/index.html`, com todas as execuções agrupadas por aplicação: o que foi testado, status de cada caso, ambiente e links do PDF, das issues e do PR. Tem busca e filtro por aplicação e status. É um arquivo estático: abra no navegador, sem servidor.
+
+**GitHub (issues e PR):** configure uma vez `~/.config/qa-agent/.env` a partir do [`.env.example`](.claude/skills/qa-validacao-tasks/.env.example) (token fine-grained com Issues e Pull requests em leitura/escrita, mapa `projeto=dono/repo`). Sem token, usa o login do `gh`. Confira com `qa_evidencias.py github check <pasta>`. Depois do relatório, o agente mostra a prévia das issues (uma por caso divergente) e só cria com o seu ok. Se você pedir a correção, ele corrige numa branch nova e abre um PR rascunho com `Closes #n`. Nada é publicado sem confirmação.
+
 **Economia de tokens:** o script faz o trabalho pesado e devolve poucas linhas; a IA lê `status`, resumos e `grep` no log, nunca o JSON ou o HTML inteiro.
 
 **Limites do agente:**
@@ -117,6 +121,7 @@ echo 'export QA_REPORTS_DIR="$HOME/qa-relatorios"' >> ~/.zshrc
 - produção só com autorização explícita
 - nunca envia formulário que crie dado real (lead, pedido, pagamento) sem aprovação por caso
 - não declara task aprovada/reprovada
+- não cria issue, não faz push nem abre PR sem a sua confirmação
 
 **O que versionar:** neste repo, as execuções ficam em `outputs/qa/`. Entram no git só `plano.json`, `run.json` e `relatorio.pdf`. As `evidencias/` (vídeos, prints, relatórios Lighthouse) e o `relatorio.html` ficam locais (ver `.gitignore`).
 

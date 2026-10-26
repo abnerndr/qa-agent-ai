@@ -12,6 +12,7 @@
 | [ADR-002](../adr/adr-002-captura-de-evidencias-pelo-agente.md) | Captura de evidências e relatório PDF pelo agente de QA | 2026-09-25 | A skill `qa-validacao-tasks` passa a executar os casos, capturar evidências (script Python + Playwright) e gerar PDF com falhas incluídas, sem veredito. Antecipa parte do V2 do PRDSI1. |
 | [ADR-003](../adr/adr-003-modo-automatico-slack-prd.md) | Modo automático: task pelo Slack e PRD pelo GitHub | 2026-10-09 | Passo 0 pergunta manual × automático; automático lê a task via MCP do Slack e o PRD do `mzk-pm-workspace` por SSH (`buscar_prd.sh`). Manual segue padrão. |
 | [ADR-004](../adr/adr-004-multiagentes-multi-ia-exploracao.md) | Multiagentes, qualquer IA e exploração autônoma | 2026-10-25 | Skill agnóstica de IA (Agent Skills + `install-skill.sh --ia`), `run.json` com trava para agentes em paralelo + `qa status`, e `qa explorar` (varredura só GET, sem IA, `--falhar` para cron/CI). Script trabalha, IA decide. |
+| [ADR-005](../adr/adr-005-painel-e-github.md) | Painel estático e issues/PR no GitHub | 2026-10-25 | `qa painel` (index.html por aplicação, sem servidor) e `qa github check/issues/pr` com token em `~/.config/qa-agent/.env` (fallback `gh`); prévia por padrão, envio só com `--criar` após ok do dev. |
 
 ---
 

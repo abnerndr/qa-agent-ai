@@ -17,6 +17,8 @@ Subcomandos:
   explorar   varre a aplicação sozinho (só GET, sem IA) e registra erros como casos
   caso       cria/atualiza um caso no run.json (status, observado, esperado...)
   status     lista os casos e o status de cada um (uma linha por caso)
+  painel     index.html com todas as execuções da pasta de relatórios, por aplicação
+  github     issues dos achados e PR da correção (prévia; envia só com --criar)
   relatorio  gera relatorio.html + relatorio.pdf a partir do run.json
 
 Toda evidência capturada com `--caso` é anexada automaticamente ao caso no run.json.
@@ -1031,6 +1033,339 @@ def cmd_relatorio(a: argparse.Namespace) -> None:
     print(f"[ok] {html_file}\n[ok] {pdf_file}")
 
 
+# ---------------------------------------------------------------- painel
+
+PAINEL_CSS = """
+:root { --bg:#f8fafc; --fg:#101828; --sub:#475467; --card:#fff; --borda:#d0d5dd; --sutil:#f2f4f7; --link:#175cd3; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg:#0b1220; --fg:#e4e7ec; --sub:#98a2b3; --card:#111a2e; --borda:#283246; --sutil:#18233a; --link:#84adff; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 32px 0 8px; }
+.sub { color: var(--sub); margin: 0 0 16px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 12px 0; }
+.card { background: var(--card); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px; }
+.card .n { font-size: 22px; font-weight: 700; }
+.filtros { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.filtros input, .filtros select { background: var(--card); color: var(--fg); border: 1px solid var(--borda); border-radius: 6px; padding: 7px 10px; font: inherit; }
+.filtros input { flex: 1; min-width: 200px; }
+details.exec { background: var(--card); border: 1px solid var(--borda); border-radius: 8px; margin: 8px 0; }
+details.exec > summary { cursor: pointer; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; list-style: none; }
+details.exec > summary::-webkit-details-marker { display: none; }
+.titulo { font-weight: 600; flex: 1 1 260px; }
+.meta { color: var(--sub); font-size: 12.5px; }
+.corpo { padding: 0 12px 12px; overflow-x: auto; }
+.badge { display: inline-block; color: #fff; border-radius: 10px; padding: 1px 8px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { border-bottom: 1px solid var(--borda); padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: var(--sutil); }
+a { color: var(--link); }
+.vazio { color: var(--sub); padding: 24px 0; }
+"""
+
+PAINEL_JS = """
+const q = document.getElementById('q'), app = document.getElementById('app'), st = document.getElementById('st');
+function filtra() {
+  const t = q.value.toLowerCase();
+  document.querySelectorAll('section[data-app]').forEach(sec => {
+    let vis = 0;
+    sec.querySelectorAll('details.exec').forEach(d => {
+      const ok = (!app.value || sec.dataset.app === app.value)
+        && (!st.value || d.dataset.status.split(' ').includes(st.value))
+        && (!t || d.textContent.toLowerCase().includes(t));
+      d.hidden = !ok; if (ok) vis++;
+    });
+    sec.hidden = vis === 0;
+  });
+}
+[q, app, st].forEach(el => el.addEventListener('input', filtra));
+"""
+
+
+def _app_da_execucao(run: dict, run_dir: Path) -> str:
+    if run.get("projeto"):
+        return run["projeto"]
+    host = urllib.parse.urlsplit(run.get("ambiente") or "").netloc
+    return host or run_dir.name
+
+
+def cmd_painel(a: argparse.Namespace) -> None:
+    """Gera um index.html estático com todas as execuções da pasta de relatórios, por aplicação."""
+    raiz = Path(a.raiz or os.environ.get("QA_REPORTS_DIR") or Path.home() / "qa-relatorios").expanduser().resolve()
+    saida = Path(a.saida).resolve() if a.saida else raiz / "index.html"
+    execucoes = []
+    for rj in sorted(raiz.glob("*/run.json")) + sorted(raiz.glob("*/*/run.json")):
+        try:
+            run = json.loads(rj.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            print(f"[aviso] ignorado (run.json inválido): {rj}")
+            continue
+        execucoes.append((rj.parent, run))
+    if not execucoes:
+        print(f"[aviso] nenhuma execução em {raiz}")
+
+    por_app: dict[str, list] = {}
+    for run_dir, run in execucoes:
+        por_app.setdefault(_app_da_execucao(run, run_dir), []).append((run_dir, run))
+    for lista in por_app.values():
+        lista.sort(key=lambda x: (x[1].get("data") or "", x[0].stat().st_mtime), reverse=True)
+
+    def link(run_dir: Path, nome: str) -> str:
+        return Path(os.path.relpath(run_dir / nome, saida.parent)).as_posix()
+
+    todos = [c for _, r in execucoes for c in r.get("casos", [])]
+    abertos = sum(1 for c in todos if c.get("status") == "divergente")
+    p = [f"<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
+         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+         f"<title>Painel de QA</title><style>{PAINEL_CSS}</style></head><body><main>"]
+    p.append(f"<h1>Painel de QA</h1><p class='sub'>{_esc(raiz)} · gerado em {dt.datetime.now():%Y-%m-%d %H:%M}</p>")
+    p.append("<div class='cards'>")
+    for n, rotulo, cor in ((len(por_app), "aplicações", None), (len(execucoes), "execuções", None),
+                           (len(todos), "casos", None), (abertos, "divergentes", STATUS_COR["divergente"])):
+        p.append(f"<div class='card'><div class='n'{f' style=color:{cor}' if cor else ''}>{n}</div>{rotulo}</div>")
+    p.append("</div><div class='filtros'><input id='q' type='search' placeholder='Buscar (título, branch, caso, URL…)'>"
+             "<select id='app'><option value=''>Todas as aplicações</option>"
+             + "".join(f"<option>{_esc(n)}</option>" for n in sorted(por_app))
+             + "</select><select id='st'><option value=''>Qualquer status</option>"
+             + "".join(f"<option>{s}</option>" for s in STATUS) + "</select></div>")
+    if not execucoes:
+        p.append(f"<p class='vazio'>Nenhuma execução encontrada. As execuções ficam em <code>{_esc(raiz)}/&lt;projeto&gt;-&lt;pr&gt;/</code>.</p>")
+
+    for nome in sorted(por_app):
+        lista = por_app[nome]
+        ambientes = sorted({r.get("ambiente") for _, r in lista if r.get("ambiente")})
+        p.append(f"<section data-app='{_esc(nome)}'><h2>{_esc(nome)}</h2>"
+                 f"<p class='sub'>{len(lista)} execução(ões) · ambientes: {_esc(', '.join(ambientes) or '—')}</p>")
+        for run_dir, run in lista:
+            casos = run.get("casos", [])
+            cont = {s: sum(1 for c in casos if c.get("status", "pendente") == s) for s in STATUS}
+            escopo = {"exploratorio": "exploração"}.get((run.get("escopo") or {}).get("tipo") or "task",
+                                                         (run.get("escopo") or {}).get("tipo") or "task")
+            badges = " ".join(f"<span class='badge' style='background:{STATUS_COR[s]}'>{cont[s]} {s}</span>"
+                              for s in STATUS if cont[s])
+            links = [f"<a href='{_esc(link(run_dir, arq))}'>{rot}</a>"
+                     for arq, rot in (("relatorio.pdf", "PDF"), ("relatorio.html", "HTML"), ("relatorio-completo.pdf", "PDF completo"))
+                     if (run_dir / arq).exists()]
+            if run.get("github_pr"):
+                links.append(f"<a href='{_esc(run['github_pr'])}'>PR</a>")
+            meta = " · ".join(_esc(x) for x in (run.get("data"), escopo, run.get("branch"), run.get("pr"), run.get("ambiente")) if x)
+            p.append(f"<details class='exec' data-status='{' '.join(s for s in STATUS if cont[s])}'><summary>"
+                     f"<span class='titulo'>{_esc(run.get('titulo') or run_dir.name)}</span>"
+                     f"<span class='meta'>{meta}</span><span>{badges or '<span class=meta>sem casos</span>'}</span>"
+                     f"<span class='meta'>{' · '.join(links)}</span></summary><div class='corpo'>")
+            p.append("<table><tr><th>Caso</th><th>Critério</th><th>Tipo</th><th>Título</th><th>Resultado</th><th>Status</th></tr>")
+            for c in casos:
+                issue = f" <a href='{_esc(c['issue'])}'>issue</a>" if c.get("issue") else ""
+                p.append(f"<tr><td><b>{_esc(c.get('id'))}</b></td><td>{_esc(c.get('criterio'))}</td><td>{_esc(c.get('tipo'))}</td>"
+                         f"<td>{_esc(c.get('titulo'))}</td><td>{_esc(_resumo(c))}{issue}</td>"
+                         f"<td>{_badge(c.get('status', 'pendente'))}</td></tr>")
+            p.append(f"</table><p class='meta'>Pasta: <code>{_esc(run_dir)}</code></p></div></details>")
+        p.append("</section>")
+    p.append(f"</main><script>{PAINEL_JS}</script></body></html>")
+    saida.parent.mkdir(parents=True, exist_ok=True)
+    saida.write_text("".join(p), encoding="utf-8")
+    print(f"[ok] {len(execucoes)} execução(ões) de {len(por_app)} aplicação(ões)\n[ok] {saida}")
+
+
+# ---------------------------------------------------------------- github
+
+GH_ENV_PADRAO = Path.home() / ".config" / "qa-agent" / ".env"
+# não manda para o GitHub corpo que pareça conter credencial
+GH_SEGREDO = re.compile(r"(?i)(authorization:|bearer\s+[a-z0-9._-]{10,}|gh[pousr]_[a-z0-9]{20,}|github_pat_|"
+                        r"api[_-]?key\s*[=:]|password\s*[=:]|senha\s*[=:]|set-cookie:|cookie:)")
+
+
+def _carregar_env() -> Path | None:
+    """Lê KEY=VALOR de $QA_ENV_FILE (padrão ~/.config/qa-agent/.env) sem sobrescrever o ambiente."""
+    arq = Path(os.environ.get("QA_ENV_FILE") or GH_ENV_PADRAO).expanduser()
+    if not arq.exists():
+        return None
+    for linha in arq.read_text(encoding="utf-8").splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith("#") or "=" not in linha:
+            continue
+        chave, _, valor = linha.removeprefix("export ").partition("=")
+        os.environ.setdefault(chave.strip(), valor.strip().strip("'\""))
+    return arq
+
+
+def _gh_token() -> str:
+    token = os.environ.get("QA_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        return token
+    import shutil
+    import subprocess
+    if shutil.which("gh"):  # reaproveita o login do GitHub CLI
+        r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    sys.exit(f"[erro] sem token do GitHub: defina QA_GITHUB_TOKEN em {GH_ENV_PADRAO} (veja .env.example da skill) "
+             "ou faça `gh auth login`")
+
+
+def _gh_repo(a: argparse.Namespace, run: dict) -> str:
+    if a.repo:
+        return a.repo
+    projeto = run.get("projeto") or ""
+    for par in (os.environ.get("QA_GITHUB_REPOS") or "").split(","):
+        nome, _, repo = par.partition("=")
+        if nome.strip() and nome.strip() == projeto:
+            return repo.strip()
+    if os.environ.get("QA_GITHUB_REPO"):
+        return os.environ["QA_GITHUB_REPO"]
+    import subprocess
+    r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+    m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", r.stdout.strip())
+    if m:
+        return m.group(1)
+    sys.exit("[erro] repositório não identificado: use --repo dono/repo, QA_GITHUB_REPOS ou QA_GITHUB_REPO no .env")
+
+
+def _gh(metodo: str, caminho: str, corpo: dict | None = None):
+    base = os.environ.get("QA_GITHUB_API", "https://api.github.com").rstrip("/")
+    req = urllib.request.Request(
+        base + caminho, method=metodo,
+        data=json.dumps(corpo).encode() if corpo is not None else None,
+        headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+                 "Authorization": f"Bearer {_gh_token()}", "User-Agent": "qa-validacao-tasks"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            texto = resp.read().decode()
+            return json.loads(texto) if texto else None
+    except urllib.error.HTTPError as e:
+        detalhe = e.read().decode(errors="replace")[:300]
+        if e.code == 404 and metodo == "GET":
+            return None
+        dica = {401: "token inválido ou expirado",
+                403: "token sem permissão (Issues/Pull requests: Read and write) ou org exige SSO",
+                404: "repositório não encontrado ou token sem acesso a ele",
+                422: "dados recusados (branch inexistente no remoto? PR já aberto?)"}.get(e.code, "")
+        sys.exit(f"[erro] GitHub {metodo} {caminho}: HTTP {e.code} {dica}\n{detalhe}")
+
+
+def _corpo_issue(run: dict, c: dict, marcador: str, run_dir: Path) -> str:
+    linhas = [f"**Resultado:** {_resumo(c)}", ""]
+    for rotulo, campo in (("Esperado", "esperado"), ("Observado", "observado"), ("Passos", "passos")):
+        if c.get(campo):
+            linhas += [f"**{rotulo}:**", str(c[campo]), ""]
+    contexto = [f"- {k}: {run[k]}" for k in ("projeto", "branch", "pr", "ambiente", "data") if run.get(k)]
+    criterio = next((cr.get("texto") for cr in run.get("criterios", []) if cr.get("id") == c.get("criterio")), None)
+    if criterio:
+        contexto.insert(0, f"- critério {c.get('criterio')}: {criterio}")
+    linhas += ["**Contexto:**", *contexto, ""]
+    if c.get("evidencias"):
+        linhas += ["**Evidências** (na pasta da execução, anexe as imagens se precisar):",
+                   *[f"- `{e}`" for e in c["evidencias"][:8]], ""]
+    linhas += [f"Relatório: `relatorio.pdf` da execução `{run_dir.name}` · caso `{c.get('id')}` · gerado pelo agente de QA, "
+               "sem veredito de aprovação.", marcador]
+    return "\n".join(linhas)
+
+
+def cmd_github(a: argparse.Namespace) -> None:
+    """Issues e PR a partir do run.json. Sem --criar só mostra a prévia (nada é enviado)."""
+    arq_env = _carregar_env()
+    run_dir = Path(a.run_dir).resolve()
+    run = load_run(run_dir)
+    repo = _gh_repo(a, run)
+
+    if a.acao == "check":
+        info = _gh("GET", f"/repos/{repo}")
+        if not info:
+            sys.exit(f"[erro] {repo}: não encontrado ou sem acesso com este token")
+        perm = info.get("permissions") or {}
+        print(f"[ok] env: {arq_env or 'nenhum arquivo (usando variáveis do ambiente/gh)'}")
+        print(f"[ok] {info['full_name']} · branch padrão {info['default_branch']} · "
+              f"push={perm.get('push')} · issues={'on' if info.get('has_issues') else 'off'}")
+        return
+
+    rotulos = [r.strip() for r in (os.environ.get("QA_GITHUB_LABELS") or "qa-agent").split(",") if r.strip()]
+    if a.acao == "issues":
+        alvo = ("divergente", "pendente") if a.incluir_pendentes else ("divergente",)
+        casos = [c for c in run.get("casos", []) if c.get("status") in alvo and (not a.casos or c.get("id") in a.casos)]
+        if not casos:
+            print("[ok] nenhum caso para virar issue")
+            return
+        existentes = {}
+        if a.criar:
+            for r in rotulos:  # rótulo precisa existir antes de ser usado
+                if _gh("GET", f"/repos/{repo}/labels/{urllib.parse.quote(r)}") is None:
+                    _gh("POST", f"/repos/{repo}/labels", {"name": r, "color": "b42318", "description": "achado do agente de QA"})
+            pagina = 1
+            while True:  # issues já abertas pelo agente, para não duplicar
+                lote = _gh("GET", f"/repos/{repo}/issues?state=all&labels={urllib.parse.quote(rotulos[0])}&per_page=100&page={pagina}") or []
+                for it in lote:
+                    for m in re.findall(r"<!-- qa-agent:[^>]+-->", it.get("body") or ""):
+                        existentes[m] = it["html_url"]
+                if len(lote) < 100:
+                    break
+                pagina += 1
+        criadas = {}
+        for c in casos:
+            marcador = f"<!-- qa-agent:{run.get('projeto') or run_dir.name}:{run_dir.name}:{c.get('id')} -->"
+            titulo = f"[QA] {c.get('titulo') or c.get('id')}: {_resumo(c)}"
+            titulo = titulo if len(titulo) <= 120 else titulo[:117] + "…"
+            corpo = _corpo_issue(run, c, marcador, run_dir)
+            if c.get("issue") or marcador in existentes:
+                print(f"{c['id']} · já tem issue: {c.get('issue') or existentes[marcador]}")
+                criadas[c["id"]] = c.get("issue") or existentes[marcador]
+                continue
+            if GH_SEGREDO.search(titulo + corpo):
+                print(f"{c['id']} · [bloqueado] corpo parece conter credencial; mascare o caso e rode de novo")
+                continue
+            if not a.criar:
+                print(f"{c['id']} · prévia → {repo}: {titulo}")
+                if a.mostrar:
+                    print("\n".join("    " + l for l in corpo.splitlines()))
+                continue
+            it = _gh("POST", f"/repos/{repo}/issues", {"title": titulo, "body": corpo, "labels": rotulos})
+            criadas[c["id"]] = it["html_url"]
+            print(f"{c['id']} · criada: {it['html_url']}")
+        if criadas:
+            with trava_run(run_dir):
+                run = load_run(run_dir)
+                for c in run.get("casos", []):
+                    if c.get("id") in criadas:
+                        c["issue"] = criadas[c["id"]]
+                save_run(run_dir, run)
+        if not a.criar:
+            print(f"[prévia] nada enviado. Para criar em {repo}: mesmo comando com --criar")
+        return
+
+    # a.acao == "pr": abre PR (rascunho por padrão) de uma branch já enviada ao remoto
+    if not a.head:
+        sys.exit("[erro] pr precisa de --head <branch com a correção, já enviada ao remoto>")
+    base = a.base or (_gh("GET", f"/repos/{repo}") or {}).get("default_branch") or "main"
+    casos = run.get("casos", [])
+    cont = " · ".join(f"{s}: {sum(1 for c in casos if c.get('status', 'pendente') == s)}" for s in STATUS)
+    linhas = [f"Correção dos achados do agente de QA em **{run.get('titulo') or run_dir.name}**.", "",
+              f"Ambiente: {run.get('ambiente') or '—'} · {cont}", "",
+              "| Caso | Status | Resultado |", "|---|---|---|"]
+    linhas += [f"| {c.get('id')} | {c.get('status', 'pendente')} | {_resumo(c).replace('|', '/')} |"
+               for c in casos if c.get("status") in ("divergente", "pendente")]
+    fecha = [c["issue"].rstrip("/").rsplit("/", 1)[-1] for c in casos
+             if c.get("issue") and c["issue"].startswith(f"https://github.com/{repo}/issues/")]
+    if fecha:
+        linhas += ["", *[f"Closes #{n}" for n in fecha]]
+    linhas += ["", f"Relatório: `relatorio.pdf` da execução `{run_dir.name}`. Rode a validação de novo depois do merge para confirmar."]
+    titulo = a.titulo or f"fix: achados de QA em {run.get('titulo') or run_dir.name}"[:120]
+    corpo = "\n".join(linhas)
+    if GH_SEGREDO.search(titulo + corpo):
+        sys.exit("[bloqueado] o corpo do PR parece conter credencial; mascare os casos e rode de novo")
+    if not a.criar:
+        print(f"[prévia] PR {'rascunho ' if not a.pronto else ''}{a.head} → {base} em {repo}: {titulo}")
+        print("\n".join("    " + l for l in corpo.splitlines()))
+        print("[prévia] nada enviado. Para abrir: mesmo comando com --criar")
+        return
+    pr = _gh("POST", f"/repos/{repo}/pulls", {"title": titulo, "head": a.head, "base": base,
+                                              "body": corpo, "draft": not a.pronto})
+    with trava_run(run_dir):
+        run = load_run(run_dir)
+        run["github_pr"] = pr["html_url"]
+        save_run(run_dir, run)
+    print(f"[ok] PR: {pr['html_url']}")
+
+
 # ---------------------------------------------------------------- CLI
 
 def main() -> None:
@@ -1130,6 +1465,25 @@ def main() -> None:
     sp.add_argument("run_dir")
     sp.add_argument("--so", nargs="+", choices=STATUS, help="filtra por status")
     sp.set_defaults(fn=cmd_status)
+
+    sp = sub.add_parser("painel", help="index.html com todas as execuções, por aplicação")
+    sp.add_argument("--raiz", help="pasta das execuções (padrão $QA_REPORTS_DIR ou ~/qa-relatorios)")
+    sp.add_argument("--saida", help="arquivo HTML (padrão <raiz>/index.html)")
+    sp.set_defaults(fn=cmd_painel)
+
+    sp = sub.add_parser("github", help="issues dos achados e PR da correção (prévia sem --criar)")
+    sp.add_argument("acao", choices=["check", "issues", "pr"])
+    sp.add_argument("run_dir")
+    sp.add_argument("--repo", help="dono/repo (padrão: QA_GITHUB_REPOS pelo projeto, QA_GITHUB_REPO ou git remote)")
+    sp.add_argument("--criar", action="store_true", help="envia de verdade; sem isto só mostra a prévia")
+    sp.add_argument("--casos", nargs="+", help="issues: só estes casos")
+    sp.add_argument("--incluir-pendentes", action="store_true", help="issues: pendentes também")
+    sp.add_argument("--mostrar", action="store_true", help="issues: prévia com o corpo completo")
+    sp.add_argument("--head", help="pr: branch com a correção (já no remoto)")
+    sp.add_argument("--base", help="pr: branch de destino (padrão: a padrão do repo)")
+    sp.add_argument("--titulo", help="pr: título")
+    sp.add_argument("--pronto", action="store_true", help="pr: abre pronto para revisão (padrão: rascunho)")
+    sp.set_defaults(fn=cmd_github)
 
     sp = sub.add_parser("relatorio", help="gera relatorio.html + relatorio.pdf")
     sp.add_argument("run_dir")
